@@ -1,2 +1,3 @@
-# Reading Wikipedia to Answer Open-Domain Questions
+# DrQA Implementation
+> Paper: Reading Wikipedia to Answer Open-Domain Questions
 
