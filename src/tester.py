@@ -1,14 +1,16 @@
-from retriever import DocumentRetriever
+from retriever import Vectorizer
 
 def main():
-    doc_ret = DocumentRetriever(bigram=False)
+    vectorizer_path = "vectorizer.pkl"
+    doc_ret = Vectorizer(bigram=False, vectorizer_path=vectorizer_path)
     docs = ["I like dogs",
             "Dogs like dogs",
             "I like cats"]
     
-    doc_ret.fit_documents(documents=docs)
-    matrix = doc_ret.get_vectors(documents=docs)
-    print(doc_ret.vectorizer.get_feature_names_out())
+    #doc_ret.fit(docs)
+    #doc_ret.save_vectorizer("vectorizer.pkl")
+    matrix = doc_ret.transform(docs)
+    print(doc_ret.get_feature_names_out())
     print(matrix.toarray())
 
 if __name__ == '__main__':
