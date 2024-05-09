@@ -1,17 +1,15 @@
 from retriever import Vectorizer
+import json
 
 def main():
-    vectorizer_path = None
-    doc_ret = Vectorizer(bigram=False, vectorizer_path=vectorizer_path)
-    docs = ["I like dogs",
-            "Dogs like dogs",
-            "I like cats"]
+    with open("./data/train-v1.1.json", "r") as f:
+        squad = json.load(f)
     
-    doc_ret.fit(docs)
-    doc_ret.save_vectorizer("vectorizer.pkl")
-    # matrix = doc_ret.transform(docs)
-    # print(doc_ret.get_feature_names_out())
-    # print(matrix.toarray())
+    print(squad['version'])
+    print(squad['data'][0].keys())
+    print(len(squad['data'][0]['paragraphs']))
+    print(squad['data'][0]['paragraphs'][0])
+    print(len(squad['data']))
 
 if __name__ == '__main__':
     main()
