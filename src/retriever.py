@@ -1,8 +1,7 @@
 from sklearn.feature_extraction.text import TfidfVectorizer
-from scipy.sparse import spmatrix
 from nltk import word_tokenize
 import nltk
-nltk.download('punkt')
+nltk.download('punkt', quiet=True)
 import joblib
 
 class Vectorizer(TfidfVectorizer):
@@ -23,6 +22,9 @@ class Vectorizer(TfidfVectorizer):
         else:
             ngram = (1,2) if self.bigram else (1,1)
             super().__init__(ngram_range=ngram, lowercase=True, strip_accents='unicode', tokenizer=self.__tokenizer)
+    
+    def _warn_for_unused_params(self):
+        pass
 
     def __getstate__(self):
         state = self.__dict__.copy()
