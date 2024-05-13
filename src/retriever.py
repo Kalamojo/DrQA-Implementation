@@ -78,30 +78,57 @@ class Retriever(object):
             page += paragraph['context'] + '\n\n'
         return page
     
-    def retrieve_docs(self, query: str, squad_path: str, num_docs: int = 5) -> list[str]:
+    def retrieve_docs(self, query: str, num_docs: int = 5) -> list[str]:
         if self.doc_matrix is None:
             raise ValueError("Document Matrix is `None`. Please run train_squad or supply a matrix_path in the constructor first")
         
         query_vector = self.vectorizer.transform([query])
         scores = self.__comparison_scores(query_vector, self.doc_matrix, metric='cosine')
-        return scores[:num_docs]
+        return scores[0][:num_docs]
+    
+    def get_accuracy(self, squad_path: str, num_docs: int = 5) -> int:
+        with open(squad_path, "r") as f:
+            squad = json.load(f)
+        
+        version = squad.get('version', None)
+        if version not in self.supported_squads:
+            raise ValueError(f"Squad version {version} is not currently supported. The available options are: \n{self.supported_squads}")
+        
+        if self.doc_matrix is None:
+            raise ValueError("Document Matrix is `None`. Please run train_squad or supply a matrix_path in the constructor first")
+        
+        correct = 0
+        questions = []
+        titles = []
+        for entry in squad['data']:
+            for paragraph in entry['paragraphs']:
+                for qa in paragraph['qas']:
+                    questions.append(qa['question'])
+                    titles.append(entry['title'])
+        query_matrix = self.vectorizer.transform(questions)
+        scores = self.__comparison_scores(query_matrix, self.doc_matrix, metric='cosine')
+        
+        for i in range(len(questions)):
+            found = False
+            for j in range(num_docs):
+                ind = scores[i][j]
+                if squad['data'][ind]['title'] == titles[i]:
+                    found = True
+                    break;
+            if found:
+                correct += 1
+        
+        return correct / len(questions)
 
-    def __comparison_scores(self, vector: sparse.spmatrix, matrix: sparse.spmatrix, metric: str) -> np.ndarray:
+    def __comparison_scores(self, matrix1: sparse.spmatrix, matrix2: sparse.spmatrix, metric: str) -> np.ndarray:
         # cosine similarity calculation
-        # print(vector.shape)
-        # print(matrix.shape)
         if metric == 'cosine':
-            scores = np.dot(vector, matrix.T)/(norm(vector)*norm(matrix))
-            #score_inds = np.argsort(-scores.T.toarray())[0]
-            score_inds = np.argsort(-scores.toarray())[0]
-            print(scores)
-            print(score_inds)
-            print(score_inds.shape)
-            print(scores.toarray()[score_inds[0]])
+            scores = np.dot(matrix1, matrix2.T)/(norm(matrix1)*norm(matrix2))
+            score_inds = np.argsort(-scores.toarray())
             return score_inds
         elif metric == 'dot':
-            scores = np.dot(vector, matrix.T)
-            score_inds = np.argsort(-scores.toarray())[0]
+            scores = np.dot(matrix2, matrix1.T)
+            score_inds = np.argsort(-scores.T.toarray())
             # print(scores)
             # print(score_inds)
             # print(score_inds.shape)
