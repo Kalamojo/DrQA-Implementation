@@ -17,7 +17,7 @@ model.compile(optimizer='adam', loss='mse')
 
 model.fit(sequence, sequence, epochs=300, verbose=0)
 
-plot_model(model, show_shapes=True, to_file='lstm_autoencoder.png')
+#plot_model(model, show_shapes=True, to_file='lstm_autoencoder.png')
 
 yhat = model.predict(sequence, verbose=0)
 print(yhat)
