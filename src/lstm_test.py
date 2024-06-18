@@ -25,6 +25,8 @@ print(yhat)
 
 encoder = Model(inputs=model.inputs, outputs=model.layers[0].output)
 
+print(len(model.get_weights()), [model.get_weights()[i].shape for i in range(len(model.get_weights()))])
+
 yhat2 = encoder.predict(sequence)
 print(yhat2.shape)
 print(yhat2)
