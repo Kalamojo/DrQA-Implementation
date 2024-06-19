@@ -72,6 +72,17 @@ class Retriever(object):
         else:
             warnings.warn("Vectorizer and Matrix were not saved because paths were not supplied")
     
+    def get_squad_docs(self, query: str, squad_path: str, num_docs: int = 5) -> list[str]:
+        with open(squad_path, "r") as f:
+            squad = json.load(f)
+        
+        version = squad.get('version', None)
+        if version not in self.supported_squads:
+            raise ValueError(f"Squad version {version} is not currently supported. The available options are: \n{self.supported_squads}")
+        
+        top_docs = self.retrieve_docs(query, num_docs)
+        return [self.extract_page(squad['data'][ind]) for ind in top_docs]
+
     def extract_page(self, squad_entry: dict) -> str:
         page = squad_entry['title'] + '\n\n\n'
         for paragraph in squad_entry['paragraphs']:
@@ -86,7 +97,7 @@ class Retriever(object):
         scores = self.__comparison_scores(query_vector, self.doc_matrix, metric='cosine')
         return scores[0][:num_docs]
     
-    def get_accuracy(self, squad_path: str, num_docs: int = 5) -> int:
+    def get_squad_accuracy(self, squad_path: str, num_docs: int = 5) -> int:
         with open(squad_path, "r") as f:
             squad = json.load(f)
         
