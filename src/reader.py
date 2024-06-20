@@ -1,5 +1,6 @@
 import csv
 import numpy as np
+from mittens import Mittens
 from sklearn.feature_extraction.text import CountVectorizer
 import warnings
 
@@ -9,17 +10,33 @@ class Embedder(object):
         self.embed_path = embed_path
         self.glove_path = glove_path
         self.model = self.__load_embedder()
+        self.dimensions = list(self.model.values())[0].shape[0]
     
-    def fine_tune(self, words: list[str], documents: list[str], vocab_save: str = None, embed_save: str = None) -> None:
-        print(len([token for token in words if token not in self.model.keys()]))
+    def embed(self, word: str) -> np.ndarray:
+        if word not in model:
+            raise KeyError("Word has not been seen by the embedding model")
+        return model[word]
+
+    def fine_tune(self, words: list[str], documents: list[str], max_iterations: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
+        # new_words = [token for token in words if token not in self.model.keys()]
+        # print(len(new_words))
         corp_vocab = list(set(words))
         big_doc = [' '.join(documents)]
         vectorizer = CountVectorizer(ngram_range=(1,1), vocabulary=corp_vocab)
         X = vectorizer.fit_transform(big_doc)
         Xc = (X.T * X)
         Xc.setdiag(0)
-        co_occurrence_matrix = Xc.toarray()
-        print(co_occurrence_matrix.shape)
+        coocc_matrix = Xc.toarray()
+        print(coocc_matrix.shape)
+
+        mittens_model = Mittens(n=self.dimensions, max_iter=max_iterations)
+        new_embeddings = mittens_model.fit(
+            coocc_matrix,
+            vocab=corp_vocab,
+            initial_embedding_dict=self.model)
+
+        for i in range(len(corp_vocab)):
+            self.model[corp_vocab[i]] = new_embeddings[i, :]
 
         if vocab_save is not None and embed_save is not None:
             self.save_embedder(vocab_save, embed_save)
@@ -63,8 +80,5 @@ class Reader(object):
 
     def fine_tune_embedder(self, words: list[str], documents: list[str], vocab_save: str = None, embed_save: str = None) -> None:
         self.embedder.fine_tune(words, documents)
-
-    def save_embedder(self, vocab_path: str, embed_path: str) -> None:
-        self.embedder.save_embedder(vocab_path, embed_path)
 
     
