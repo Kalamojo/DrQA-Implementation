@@ -7,9 +7,9 @@ def main():
     doc_retriever = Retriever(vectorizer_path="vectorizer_v1.pkl", matrix_path="matrix_v1.npz")
     #doc_reader.embedder.save_embedder("vocab_v1.vocab", "embeddings_v1.npy")
 
-    query = "Who was the first president of the United States?"
-    docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
-    doc_reader.fine_tune_embedder(["who", "what", "when", "where", "why", "how"], docs)
+    # query = "Who was the first president of the United States?"
+    # docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
+    # doc_reader.fine_tune_embedder(["who", "what", "when", "where", "why", "how"], docs)
 
 if __name__ == '__main__':
     main()
