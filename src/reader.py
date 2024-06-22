@@ -1,12 +1,11 @@
 import csv
-import h5py
 import numpy as np
-from mittens import Mittens, GloVe
+from mittens import Mittens
 from sklearn.feature_extraction.text import CountVectorizer
-from nltk.tokenize import word_tokenize
+import spacy
+from spacy.tokens import Token, Doc
 from collections import Counter
 import warnings
-import time
 
 class Embedder(object):
     def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None) -> None:
@@ -18,12 +17,15 @@ class Embedder(object):
         print(self.dimensions)
     
     def embed(self, word: str) -> np.ndarray:
-        ind = self.vocab.index(word)
-        return self.embeddings[ind]
+        try:
+            ind = self.vocab.index(word)
+            return self.embeddings[ind]
+        except ValueError:
+            return np.zeros(self.dimensions)
 
     def fine_tune(self, words: list[str], documents: list[str], max_iterations: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
-        # new_words = [token for token in words if token not in self.model.keys()]
-        # print(len(new_words))
+        new_words = [token for token in words if token not in self.vocab]
+        print(len(new_words))
         corp_vocab = list(set(words))
         big_doc = [' '.join(documents)]
         vectorizer = CountVectorizer(ngram_range=(1,1), vocabulary=corp_vocab)
@@ -82,21 +84,58 @@ class Embedder(object):
 class Reader(object):
     def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None) -> None:
         self.embedder = Embedder(vocab_path, embed_path, glove_path)
-        self.lemmatizer = WordNetLemmatizer()
+        print("loading spacy")
+        spacy.prefer_gpu()
+        self.nlp = spacy.load("en_core_web_sm")
+        print("done loading")
+
+    def construct_vectors(self, documents: list[str], query: str) -> list[np.ndarray]:
+        matrix_list = []
+        query_tokens = self.match_tokenize(query)
+        ind = 0
+        for doc in self.nlp.pipe(documents, batch_size=1000, n_process=2):
+            print(doc[:100])
+            matrix = []
+            counter = Counter([token.text for token in doc])
+            for token in doc:
+                # ind += 1
+                # if ind != 5:
+                #     continue;
+                #print(doc[i].text)
+                embedding = self.embedder.embed(token.text)
+                match_vec = self.exact_match(token, query_tokens)
+                token_vec = self.token_feature(token, counter)
+                matrix.append(np.concatenate((embedding, match_vec, token_vec)))
+                #print(match_vec, token_vec)
+                #return;
+            matrix_list.append(np.array(matrix))
+        return matrix_list
+                
 
     def fine_tune_embedder(self, documents: list[str], common_count: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
-        all_words = ' '.join(documents).split()
+        tokenizer = self.nlp.tokenizer
+        doc = tokenizer(' '.join(documents))
+        all_words = [token.text for token in doc]
+        print("spacy done tokenizing")
         counter = Counter(all_words)
-        common_words, counts = zip(counter.most_common(common_count))
-        self.embedder.fine_tune(common_words, documents, vocab_save, embed_save)
+        common_words, counts = zip(*counter.most_common(common_count))
+        self.embedder.fine_tune(common_words, documents, max_iterations=2000, vocab_save=vocab_save, embed_save=embed_save)
 
-    def __match_tokenize(self, sentence: str) -> tuple(list[str], list[str], list[str]):
-        sentence_og = word_tokenize(sentence)
-        sentence_lower = [word.lower() for word in sentence_og]
-        sentence_lemma = [self.lemmatizer.lemmatize()]
+    def match_tokenize(self, sentence: str) -> Doc:
+        self.nlp.tokenizer
+        return self.nlp(sentence)
 
-    def __exact_match(self, word: str, question_og: list[str], question_lower: list[str], question_lemma: list[str]) -> np.ndarray:
-        og = int(word in question_og)
-        low = int(word.lower() in question_lower)
-        lem = int(self.lemmatizer.lemmatize(word) in question_lemma)
+    def exact_match(self, word: Token, question_tokens: Doc) -> np.ndarray:
+        og = int(word.text in set(token.text for token in question_tokens))
+        low = int(word.text.lower() in set(token.text.lower() for token in question_tokens))
+        lem = int(word.lemma_ in set(token.lemma_ for token in question_tokens))
         return np.array([og, low, lem])
+    
+    def token_feature(self, word: Token, counter: Counter) -> np.ndarray:
+        pos = self.nlp.meta['labels']['tagger'].index(word.tag_)
+        if word.ent_type_ != "":
+            ner = self.nlp.meta['labels']['ner'].index(word.ent_type_) + 1
+        else:
+            ner = 0
+        termF = counter[word.text]
+        return np.array([pos, ner, termF])
