@@ -84,7 +84,7 @@ class Retriever(object):
         return [self.extract_page(squad['data'][ind]) for ind in top_docs]
 
     def extract_page(self, squad_entry: dict) -> str:
-        page = squad_entry['title'] + '\n\n\n'
+        page = ' '.join(squad_entry['title'].split('_')) + '\n\n\n'
         for paragraph in squad_entry['paragraphs']:
             page += paragraph['context'] + '\n\n'
         return page
