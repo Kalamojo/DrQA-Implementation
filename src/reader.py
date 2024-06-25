@@ -116,7 +116,7 @@ class Reader(object):
         matrix_list = []
         query_tokens = self.match_tokenize(query)
         start = time.time()
-        for doc in self.nlp.pipe(documents, batch_size=1, n_process=4):
+        for doc in self.nlp.pipe(documents, batch_size=2, n_process=4):
             #print(doc.text[:100])
             matrix = []
             counter = Counter((token.text for token in doc))
@@ -126,13 +126,12 @@ class Reader(object):
                 token_vec = self.token_feature(token, counter)
                 matrix.append(np.concatenate((embedding, match_vec, token_vec)))
             matrix = np.array(matrix)
-            matrix[:, -1] = matrix[:, -1]/np.linalg.norm(matrix[:, -1])
+            matrix[:, -3:] = matrix[:, -3:]/np.linalg.norm(matrix[:, -3:], axis=0)[:, None]
             matrix_list.append(matrix)
         
         end = time.time()
         print("took", end - start, "seconds")
-        return matrix_list
-                
+        return matrix_list        
 
     def fine_tune_embedder(self, documents: list[str], common_count: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
         joined_docs = ' '.join(documents)
