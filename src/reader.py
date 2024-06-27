@@ -5,9 +5,10 @@ from sklearn.feature_extraction.text import CountVectorizer
 from nltk import TreebankWordTokenizer, PunktSentenceTokenizer
 import spacy
 import tensorflow as tf
-from tensorflow.keras import Input, Model
-from tensorflow.keras.layers import Layer, SimpleRNN
-import tensorflow.keras.backend as K
+from tensorflow import keras
+from keras import Input, Model
+from keras.layers import Layer, SimpleRNN
+import keras.backend as K
 from spacy.vocab import Vocab
 from spacy.tokens import Token, Doc
 from collections import Counter
@@ -168,7 +169,7 @@ class Reader(object):
         matrix_list = []
         start = time.time()
         query_tokens = self.__match_tokenize(query)
-        query_embedding = np.array([self.embedder.embed(token.text) for token in question_tokens])
+        query_embedding = np.array([self.embedder.embed(token.text) for token in query_tokens])
         query_ind_embedding = self.ind_embedder(query_embedding, training=train)
         print(query_embedding.shape)
         for doc in self.nlp.pipe(documents, batch_size=2, n_process=4):
