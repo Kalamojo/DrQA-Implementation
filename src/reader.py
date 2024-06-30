@@ -1,14 +1,11 @@
+from aligner import Aligner
+from retriever import Retriever
 import csv
 import numpy as np
 from mittens import Mittens
 from sklearn.feature_extraction.text import CountVectorizer
 from nltk import TreebankWordTokenizer, PunktSentenceTokenizer
 import spacy
-import tensorflow as tf
-from tensorflow import keras
-from keras import Input, Model
-from keras.layers import Layer, SimpleRNN
-import keras.backend as K
 from spacy.vocab import Vocab
 from spacy.tokens import Token, Doc
 from collections import Counter
@@ -107,105 +104,75 @@ class NLTKCustomTokenizer(object):
                     spaces.append(False)
         return Doc(self.vocab, words=words, spaces=spaces)
 
-class AlignmentLayer(Layer):
-    def __init__(self, **kwargs):
-        super(AlignmentLayer, self).__init__(**kwargs)
-
-    def build(self, input_shape):
-        self.W = self.add_weight(name="attention_weight", shape=(input_shape[1][-1], 1),
-            initializer="random_normal", trainable=True)
-        self.b = self.add_weight(name="attention_bias", shape=(input_shape[1][1], 1),
-            initializer="zeros", trainable=True)
-        super(AlignmentLayer, self).build(input_shape)
-
-    def call(self, x):
-        embed_q, embed_p = x
-        print(embed_q.shape, embed_p.shape)
-        query_p = embed_p @ self.W + self.b
-        # Alignment scores
-        scores = K.tanh(K.dot(embed_q, query_p))
-        # Remove dimension of size 1
-        alpha = K.softmax(scores)
-        # Reshape to tensorFlow format
-        alpha = K.expand_dims(alpha, axis=-1)
-        # Compute context vector
-        context = embed_q * alpha
-        context = K.sum(context, axis=1)
-        return context
-
-class Attention(Layer):
-    def __init__(self, **kwargs):
-        super(Attention, self).__init__(**kwargs)
-
-    def build(self, input_shape):
-        self.W = self.add_weight(name="attention_weight", shape=(input_shape[-1], 1),
-            initializer="random_normal", trainable=True)
-        self.b = self.add_weight(name="attention_bias", shape=(input_shape[1], 1),
-            initializer="zeros", trainable=True)
-        super(Attention, self).build(input_shape)
-
-    def call(self, x):
-        # Alignment scores
-        scores = K.tanh(K.dot(x, self.W)+self.b)
-        # Remove dimension of size 1
-        alpha = K.softmax(scores)
-        # Reshape to tensorFlow format
-        alpha = K.expand_dims(alpha, axis=-1)
-        # Compute context vector
-        context = x * alpha
-        context = K.sum(context, axis=1)
-        return context
-
 class Reader(object):
-    def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None) -> None:
+    def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None, question_pad: int = None) -> None:
         self.embedder = Embedder(vocab_path, embed_path, glove_path)
         #spacy.prefer_gpu()
         self.nlp = spacy.load("en_core_web_sm", exclude=['tok2vec'])
         self.nlp.tokenizer = NLTKCustomTokenizer(self.nlp.vocab)
-        self.qp_aligner = self.create_question_aligner()
-        self.ind_embedder = self.create_independant_embedder()
+        self.aligner = Aligner(self.embedder.dimensions, None)
 
-    def construct_vectors(self, documents: list[str], query: str, train=False) -> tuple[list[np.ndarray], np.ndarray]:
+    def train_reader(self, doc_retriever: Retriever, squad_path: str, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], num_docs = 5, num_questions: int = 100):
+        questions_list = [TreebankWordTokenizer().tokenize(question[0]) for question in questions]
+        max_words = max(len(q_list) for q_list in questions_list)
+        self.aligner.create_question_encoder(input_shape=(self.embedder.dimensions, 1))
+        self.aligner.q_encoder.summary()
+        self.aligner.q_aligner.summary()
+        
+        for i in range(len(questions)):
+            doc = documents[questions[i][1]]
+            title = doc[:doc.find('\n\n\n')]
+            retrieved_docs = doc_retriever.get_squad_docs(questions[i][0], squad_path, num_docs)
+            #print(retrieved_docs)
+            titles = [d[:d.find('\n\n\n')] for d in retrieved_docs]
+            if title not in titles:
+                retrieved_docs.pop()
+                retrieved_docs.append(doc)
+            
+            paragraph_vectors, query_vector = self.__construct_vectors(retrieved_docs, questions_list[i], max_words, False)
+            print(paragraph_vectors.shape, query_vector.shape)
+            return;
+
+    def __construct_vectors(self, documents: list[str], query_list: list[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
         matrix_list = []
         start = time.time()
-        query_tokens = self.__match_tokenize(query)
-        query_embedding = np.array([self.embedder.embed(token.text) for token in query_tokens])
-        query_ind_embedding = self.ind_embedder(query_embedding, training=train)
+        zeroes = np.zeros((pad_size - len(query_list), self.embedder.dimensions))
+        query_embedding = np.concatenate((zeroes, np.array([self.embedder.embed(word) for word in query_list])))
+        #print(query_embedding)
         print(query_embedding.shape)
+        #return;
+        query_ind_embedding = self.aligner.q_encoder(query_embedding.reshape((pad_size, self.embedder.dimensions, 1)), training=train)
+        print(query_ind_embedding.shape)
         for doc in self.nlp.pipe(documents, batch_size=2, n_process=4):
-            #print(doc.text[:100])
+            print(doc.text[:100])
             matrix = []
+            #print("counting doc of length", len(doc.text))
             counter = Counter((token.text for token in doc))
+            #print("done counting")
             for token in doc:
+                #print("is it even entering")
                 p_embedding = self.embedder.embed(token.text)
-                match_vec = self.__exact_match(token, query_tokens)
+                #print("embedded")
+                match_vec = self.__exact_match(token, query_list)
+                #print("matched")
                 token_vec = self.__token_feature(token, counter)
-                aligned_vec = self.qp_aligner([query_embedding, p_embedding], training=train)
-                matrix.append(np.concatenate((p_embedding, match_vec, token_vec, aligned_vec)))
+                # print("featured")
+                # print(p_embedding.shape)
+                # print((p_embedding.shape[0], p_embedding.shape[1], 1))
+                p_embedding_shaped = p_embedding.reshape((p_embedding.shape[0], 1))
+                print("starting aligning")
+                aligned_vec = self.aligner.q_aligner([query_embedding.reshape(1, query_embedding[0], query_embedding[1]), p_embedding_shaped], training=train)
+                print("done aligning")
+                print(aligned_vec.shape)
+                return;
+                matrix.append(np.concatenate((aligned_vec, p_embedding, match_vec, token_vec)))
             matrix = np.array(matrix)
-            f_start, f_end = -1 * query_embedding.shape[0] - 3, -1 * query_embedding.shape[0]
-            matrix[:, f_start:f_end] = matrix[:, f_start:f_end]/np.linalg.norm(matrix[:, f_start:f_end], axis=0)[:, None]
+            matrix[:, -3:] = matrix[:, -3:]/np.linalg.norm(matrix[:, -3:], axis=0)[:, None]
             matrix_list.append(matrix)
         
         end = time.time()
         print("took", end - start, "seconds")
         return matrix_list, query_ind_embedding
-
-    def create_question_aligner(self, input_shape: list[tuple] = [(300,), (300,)]) -> Model:
-        x_q = Input(shape=input_shape[0])
-        x_p = Input(shape=input_shape[1])
-        alignment_layer = AlignmentLayer()([x_q, x_p])
-        model = Model([x_q, x_p], alignment_layer)
-        assert model.output_shape == (input_shape[0][1], input_shape[0][2])
-        return model
-
-    def create_independant_embedder(self, input_shape: tuple = (300,), hidden_units: int = 20, dense_units: int = 20, activation: str = "tanh") -> Model:
-        x = Input(shape=input_shape)
-        RNN_layer = SimpleRNN(hidden_units, return_sequences=True, activation=activation)(x)
-        attention_layer = Attention()(RNN_layer)
-        model = Model(x, attention_layer)
-        assert model.output_shape == (input_shape[0], input_shape[1])
-        return model
 
     def fine_tune_embedder(self, documents: list[str], common_count: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
         joined_docs = ' '.join(documents)
@@ -215,13 +182,10 @@ class Reader(object):
         common_words, counts = zip(*counter.most_common(common_count))
         self.embedder.fine_tune(common_words, documents, max_iterations=2000, vocab_save=vocab_save, embed_save=embed_save)
 
-    def __match_tokenize(self, sentence: str) -> Doc:
-        return self.nlp(sentence)
-
-    def __exact_match(self, word: Token, question_tokens: Doc) -> np.ndarray:
-        og = int(word.text in (token.text for token in question_tokens))
-        low = int(word.text.lower() in (token.text.lower() for token in question_tokens))
-        lem = int(word.lemma_ in (token.lemma_ for token in question_tokens))
+    def __exact_match(self, word: Token, question: list[str]) -> np.ndarray:
+        og = int(word.text in question)
+        low = int(word.text.lower() in question)
+        lem = int(word.lemma_ in question)
         return np.array([og, low, lem])
     
     def __token_feature(self, word: Token, counter: Counter) -> np.ndarray:

@@ -20,12 +20,28 @@ def main():
     # #doc_reader.embedder.save_embedder("vocab_v1.vocab", "embeddings_v1.npy")
     #fineTune(doc_reader, doc_retriever)
 
-    query = "What was Beyoncé's first major breakout album?"
-    docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
-    matrix_list = doc_reader.construct_vectors(docs, query)
-    print(len(matrix_list))
-    print(matrix_list[0].shape)
-    print(matrix_list[0])
+    pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
+    doc_reader.train_reader(doc_retriever, "./data/train-v1.1.json", pages, questions, answers)
+
+    # ind = 4365
+    # print(questions[ind])
+    # print(answers[ind])
+    # ans = next(iter(answers[ind]))
+    # print("!!!" + pages[questions[ind][1]][ans[0]:ans[1]] + "!!!")
+
+    # print()
+    # ind = 34734
+    # print(questions[ind])
+    # print(answers[ind])
+    # ans = next(iter(answers[ind]))
+    # print("!!!" + pages[questions[ind][1]][ans[0]:ans[1]] + "!!!")
+
+    # query = "What was Beyoncé's first major breakout album?"
+    # docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
+    # matrix_list = doc_reader.construct_vectors(docs, query, False)
+    # print(len(matrix_list))
+    # print(matrix_list[0].shape)
+    # print(matrix_list[0])
     
     # s = '''Good muffins cost $3.88\nin New (York).  Please (buy) me\ntwo of them.\n(Thanks).'''
     # big = len(s)

@@ -71,7 +71,7 @@ class Retriever(object):
             self.vectorizer.save_vectorizer(vectorizer_save)
         else:
             warnings.warn("Vectorizer and Matrix were not saved because paths were not supplied")
-    
+
     def get_squad_docs(self, query: str, squad_path: str, num_docs: int = 5) -> list[str]:
         with open(squad_path, "r") as f:
             squad = json.load(f)
@@ -89,14 +89,41 @@ class Retriever(object):
             page += paragraph['context'] + '\n\n'
         return page
     
-    def retrieve_docs(self, query: str, num_docs: int = 5) -> list[str]:
+    def get_squad_qas(self, squad_path: str) -> tuple[list[str], list[tuple[str, int]], list[tuple[int, int]]]:
+        with open(squad_path, "r") as f:
+            squad = json.load(f)
+        
+        version = squad.get('version', None)
+        if version not in self.supported_squads:
+            raise ValueError(f"Squad version {version} is not currently supported. The available options are: \n{self.supported_squads}")
+        
+        page_ind = 0
+        pages = []
+        questions = []
+        answers = []
+        for entry in squad['data']:
+            page = ' '.join(entry['title'].split('_')) + '\n\n\n'
+            offset = len(page)
+            for paragraph in entry['paragraphs']:
+                for qa in paragraph['qas']:
+                    questions.append((qa['question'], page_ind))
+                    answers.append(set((offset+ans['answer_start'], offset+ans['answer_start']+len(ans['text'])) 
+                                       for ans in qa['answers']))
+                page += paragraph['context'] + '\n\n'
+                offset += len(paragraph['context'] + '\n\n')
+            pages.append(page)
+            page_ind += 1
+        
+        return pages, questions, answers
+    
+    def retrieve_docs(self, query: str, num_docs: int = 5) -> np.ndarray:
         if self.doc_matrix is None:
             raise ValueError("Document Matrix is `None`. Please run train_squad or supply a matrix_path in the constructor first")
         
         query_vector = self.vectorizer.transform([query])
         scores = self.__comparison_scores(query_vector, self.doc_matrix, metric='cosine')
         return scores[0][:num_docs]
-    
+
     def get_squad_accuracy(self, squad_path: str, num_docs: int = 5) -> int:
         with open(squad_path, "r") as f:
             squad = json.load(f)
