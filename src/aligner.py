@@ -5,47 +5,53 @@ from keras.layers import Layer, SimpleRNN
 import keras.backend as K
 import os
 
+@tf.keras.utils.register_keras_serializable(package='Aligner')
 class AlignmentLayer(Layer):
     def __init__(self, **kwargs):
         super(AlignmentLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        self.W = self.add_weight(name="attention_weight", shape=(input_shape[1][-1], 1),
+        self.W = self.add_weight(name="attention_weight", shape=(input_shape[0][-1], 1),
             initializer="random_normal", trainable=True)
-        self.b = self.add_weight(name="attention_bias", shape=(input_shape[1][-1], 1),
+        self.b = self.add_weight(name="attention_bias", shape=(input_shape[0][1], 1),
             initializer="zeros", trainable=True)
         super(AlignmentLayer, self).build(input_shape)
 
     def call(self, x):
         embed_q, embed_p = x
         #embed_p = K.reshape(embed_p, (embed_p.shape[0], 1))
-        print("align input", embed_q.shape, embed_p.shape)
-        print("weights and bias", self.W.shape, self.b.shape)
+        # print("align input", embed_q.shape, embed_p.shape)
+        # print("weights and bias", self.W.shape, self.b.shape)
         # Multiplying by weights
-        weighted_p = K.dot(self.W, K.permute_dimensions(embed_p, (1, 0)))+self.b
-        print(weighted_p.shape)
-        print("bad stuff?")
-        weighted_q = K.dot(self.W, embed_q)
-        print(weighted_q.shape)
+        weighted_p = K.dot(embed_p, self.W)+self.b
+        # print(weighted_p.shape)
+        # print("bad stuff?")
+        weighted_q = K.dot(embed_q, self.W)
+        # print(weighted_q.shape)
         weighted_q = weighted_q + self.b
-        print("or worse stuff?")
-        print(weighted_p.shape, weighted_q.shape)
-        print("hmmm, actually did it")
+        # print("or worse stuff?")
+        # print(weighted_p.shape, weighted_q.shape)
+        # print("hmmm, actually did it")
         # Alignment scores
         #print(K.permute_dimensions(weighted_q, (1, 0)).shape)
-        scores = weighted_q @ K.permute_dimensions(weighted_p, (1, 0))
-        print("cuh")
-        scores = scores / K.sum(scores, axis=1)
-        print("scores", scores.shape)
+        #scores = K.dot(weighted_q, K.permute_dimensions(weighted_p, (0, 2, 1)))
+        scores = tf.einsum('ijk,kjk->ij', weighted_q, weighted_p)
+        # print(scores.shape)
+        # print("cuh")
+        scores = K.sum(scores, axis=0)
+        # print("scores", scores.shape)
         # Compute the weights
         alpha = K.softmax(scores)
-        print("alpha.shape", alpha.shape)
+        alpha = K.expand_dims(alpha, axis=-1)
+        # print("alpha.shape", alpha.shape)
         context = embed_q * alpha
-        print("context", context.shape)
-        context = K.sum(context, axis=1)
-        print("new context", context.shape)
+        # print("context", context.shape)
+        context = K.sum(context, axis=0)
+        context = K.squeeze(context, axis=-1)
+        # print("new context", context.shape)
         return context
 
+@tf.keras.utils.register_keras_serializable(package='Attender')
 class Attention(Layer):
     def __init__(self, **kwargs):
         super(Attention, self).__init__(**kwargs)
@@ -58,7 +64,7 @@ class Attention(Layer):
         super(Attention, self).build(input_shape)
 
     def call(self, x):
-        print("input", x.shape)
+        #print("input", x.shape)
         # print("weights and bias", self.W.shape, self.b.shape)
         # Alignment scores
         scores = K.tanh(K.dot(x, self.W)+self.b)
@@ -80,12 +86,12 @@ class Aligner(object):
         self.create_question_encoder(input_shape=q_encoder_shape)
 
     def create_question_aligner(self) -> None:
-        x_q = Input(shape=(59, self.embed_dim))
-        x_p = Input(shape=(1, self.embed_dim))
+        x_q = Input(shape=(self.embed_dim, 1))
+        x_p = Input(shape=(self.embed_dim, 1))
         alignment_layer = AlignmentLayer()([x_q, x_p])
         model = Model([x_q, x_p], alignment_layer, name="Question_Aligner")
         #print("expected", (1, input_shape[0][0]))
-        print("actual", model.output_shape)
+        # print("actual", model.output_shape)
         assert model.output_shape == (self.embed_dim,)
         self.q_aligner = model
 
@@ -97,9 +103,9 @@ class Aligner(object):
         RNN_layer = SimpleRNN(hidden_units, return_sequences=True, activation=activation)(x)
         attention_layer = Attention()(RNN_layer)
         model = Model(x, attention_layer, name="Question_Encoder")
-        print("input", input_shape)
+        # print("input", input_shape)
         # print("expected", (1, input_shape[0]))
-        print("actual", model.output_shape)
+        # print("actual", model.output_shape)
         assert model.output_shape == (None, hidden_units)
         self.q_encoder = model
     

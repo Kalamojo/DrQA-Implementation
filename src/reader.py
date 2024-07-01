@@ -1,4 +1,4 @@
-from aligner import Aligner
+from aligner import Aligner, AlignmentLayer, Attention
 from retriever import Retriever
 import csv
 import numpy as np
@@ -12,6 +12,9 @@ from collections import Counter
 from itertools import chain
 import warnings
 import time
+from joblib import Parallel, delayed
+import tensorflow as tf
+tf.compat.v1.enable_eager_execution()
 
 class Embedder(object):
     def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None) -> None:
@@ -108,9 +111,10 @@ class Reader(object):
     def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None, question_pad: int = None) -> None:
         self.embedder = Embedder(vocab_path, embed_path, glove_path)
         #spacy.prefer_gpu()
-        self.nlp = spacy.load("en_core_web_sm", exclude=['tok2vec'])
+        self.nlp = spacy.load("en_core_web_sm", exclude=['parser'])
         self.nlp.tokenizer = NLTKCustomTokenizer(self.nlp.vocab)
         self.aligner = Aligner(self.embedder.dimensions, None)
+        self.train = False
 
     def train_reader(self, doc_retriever: Retriever, squad_path: str, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], num_docs = 5, num_questions: int = 100):
         questions_list = [TreebankWordTokenizer().tokenize(question[0]) for question in questions]
@@ -135,44 +139,82 @@ class Reader(object):
 
     def __construct_vectors(self, documents: list[str], query_list: list[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
         matrix_list = []
-        start = time.time()
+        
         zeroes = np.zeros((pad_size - len(query_list), self.embedder.dimensions))
-        query_embedding = np.concatenate((zeroes, np.array([self.embedder.embed(word) for word in query_list])))
+        query_embedding = np.concatenate((zeroes, np.array([self.embedder.embed(word) for word in query_list]))).reshape((pad_size, self.embedder.dimensions, 1))
         #print(query_embedding)
-        print(query_embedding.shape)
+        #print(query_embedding.shape)
         #return;
-        query_ind_embedding = self.aligner.q_encoder(query_embedding.reshape((pad_size, self.embedder.dimensions, 1)), training=train)
-        print(query_ind_embedding.shape)
-        for doc in self.nlp.pipe(documents, batch_size=2, n_process=4):
-            print(doc.text[:100])
-            matrix = []
-            #print("counting doc of length", len(doc.text))
-            counter = Counter((token.text for token in doc))
-            #print("done counting")
-            for token in doc:
-                #print("is it even entering")
-                p_embedding = self.embedder.embed(token.text)
-                #print("embedded")
-                match_vec = self.__exact_match(token, query_list)
-                #print("matched")
-                token_vec = self.__token_feature(token, counter)
-                # print("featured")
-                # print(p_embedding.shape)
-                # print((p_embedding.shape[0], p_embedding.shape[1], 1))
-                p_embedding_shaped = p_embedding.reshape((p_embedding.shape[0], 1))
-                print("starting aligning")
-                aligned_vec = self.aligner.q_aligner([query_embedding.reshape(1, query_embedding[0], query_embedding[1]), p_embedding_shaped], training=train)
-                print("done aligning")
-                print(aligned_vec.shape)
-                return;
-                matrix.append(np.concatenate((aligned_vec, p_embedding, match_vec, token_vec)))
-            matrix = np.array(matrix)
-            matrix[:, -3:] = matrix[:, -3:]/np.linalg.norm(matrix[:, -3:], axis=0)[:, None]
-            matrix_list.append(matrix)
+        query_ind_embedding = self.aligner.q_encoder(query_embedding, training=train)
+        #print(query_ind_embedding)
+        #print(query_ind_embedding.shape)
+
+        joined_documents = '\n\n\n\n'.join(documents)
+        all_words = chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(joined_documents))
+        counter = Counter(all_words)
+        
+        paragraphs = list(filter(None, joined_documents.split('\n')))
+        
+        #print(len(paragraphs))
+        #count = 0
+        start = time.time()
+        # for doc in self.nlp.pipe(paragraphs, batch_size=2, n_process=4):
+        #     matrix_list.append(self.__featurize(doc, query_list, counter))
+        matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), query_embedding, query_list, counter)
+        matrix_list = np.vstack(matrix_list)
+        print(matrix_list.shape)
+        matrix_list[:, -3:] = matrix_list[:, -3:]/np.linalg.norm(matrix_list[:, -3:], axis=1)[:, None]
+        #matrix_list.append(matrix)
         
         end = time.time()
         print("took", end - start, "seconds")
         return matrix_list, query_ind_embedding
+
+    def __featurize(self, doc: Doc, query_embedding: np.ndarray, query_list: list[str], counter: Counter) -> list[np.ndarray]:
+        matrix = []
+        for token in doc:
+            # if count % 1000 == 0:
+            #     print("Current count:", count)
+            #print("is it even entering")
+            p_embedding = self.embedder.embed(token.text)
+            #print("embedded")
+            match_vec = self.__exact_match(token, query_list)
+            # #print("matched")
+            token_vec = self.__token_feature(token, counter[token.text])
+            # print("featured")
+            # print(p_embedding.shape)
+            # print((p_embedding.shape[0], p_embedding.shape[1], 1))
+            p_embedding_shaped = p_embedding.reshape((1, p_embedding.shape[0], 1))
+            #print("starting aligning")
+            aligned_vec = self.aligner.q_aligner([query_embedding, p_embedding_shaped], training=self.train)
+            #print("done aligning")
+            #print(aligned_vec)
+            #print(aligned_vec.shape)
+            matrix.append(np.concatenate((aligned_vec, p_embedding, match_vec, token_vec)))
+            #matrix.append(np.concatenate((p_embedding, match_vec, token_vec)))
+            #matrix_list.append(p_embedding)
+            #count += 1
+            #print(matrix[-1].shape)
+        return matrix
+    
+    def chunker(self, iterable, total_length, chunksize):
+        return (iterable[pos: pos + chunksize] for pos in range(0, total_length, chunksize))
+    
+    def flatten(self, list_of_lists: list[list]) -> list:
+        return [item for sublist in list_of_lists for item in sublist]
+    
+    def process_chunk(self, texts, query_embedding: np.ndarray, query_list: list[str], counter: Counter) -> list[list[np.ndarray]]:
+        matrix_list = []
+        for doc in self.nlp.pipe(texts, batch_size=20):
+            matrix_list.append(self.__featurize(doc, query_embedding, query_list, counter))
+        return matrix_list
+    
+    def preprocess_parallel(self, texts, num_texts: int, query_embedding: np.ndarray, query_list: list[str], counter: Counter, chunksize: int = 70, n_jobs: int = 7) -> list[np.ndarray]:
+        executor = Parallel(n_jobs=n_jobs, backend='multiprocessing', prefer='processes', max_nbytes=None)
+        do = delayed(self.process_chunk)
+        tasks = (do(chunk, query_embedding, query_list, counter) for chunk in self.chunker(texts, num_texts, chunksize=chunksize))
+        result = executor(tasks)
+        return self.flatten(result)
 
     def fine_tune_embedder(self, documents: list[str], common_count: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
         joined_docs = ' '.join(documents)
@@ -188,11 +230,10 @@ class Reader(object):
         lem = int(word.lemma_ in question)
         return np.array([og, low, lem])
     
-    def __token_feature(self, word: Token, counter: Counter) -> np.ndarray:
+    def __token_feature(self, word: Token, freq: int) -> np.ndarray:
         pos = self.nlp.meta['labels']['tagger'].index(word.tag_)
         if word.ent_type_ != "":
             ner = self.nlp.meta['labels']['ner'].index(word.ent_type_) + 1
         else:
             ner = 0
-        termF = counter[word.text]
-        return np.array([pos, ner, termF])
+        return np.array([pos, ner, freq])
