@@ -132,11 +132,11 @@ class Reader(object):
                 retrieved_docs.pop()
                 retrieved_docs.append(doc)
             
-            paragraph_vectors, query_vector = self.__construct_vectors(retrieved_docs, set(questions_list[i]), max_words, False)
+            paragraph_vectors, query_vector = self.__construct_vectors(retrieved_docs, questions_list[i], max_words, False)
             print(paragraph_vectors.shape, query_vector.shape)
             return;
 
-    def __construct_vectors(self, documents: list[str], query_set: set[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
+    def __construct_vectors(self, documents: list[str], query_list: list[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
         matrix_list = []
         
         zeroes = np.zeros((pad_size - len(query_list), self.embedder.dimensions))
@@ -150,14 +150,17 @@ class Reader(object):
 
         joined_documents = '\n\n\n\n'.join(documents)
         all_words = chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(joined_documents))
+
         counter = Counter(all_words)
 
-        p_embeddings = np.array([self.embedder.embed(word) for word in all_words])
+        all_words_copy = chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(joined_documents))
+        p_embeddings = np.array([self.embedder.embed(word) for word in all_words_copy])
+        print(p_embeddings.shape)
         n_in = p_embeddings.shape[0]
         input_dim = p_embeddings.shape[1]
-        p_embeddings = p_embeddings.reshape((n_in, input_dim, 1))
-        print(p_embeddings.shape)
-        aligned_matrix = self.aligner.q_aligner([query_embedding, p_embeddings], training=self.train)=
+        p_embeddings_shaped = p_embeddings.reshape((n_in, input_dim, 1))
+        print(p_embeddings_shaped.shape)
+        aligned_matrix = self.aligner.q_aligner([query_embedding, p_embeddings_shaped], training=self.train)
         print(aligned_matrix.shape)
 
         paragraphs = list(filter(None, joined_documents.split('\n')))
@@ -167,8 +170,9 @@ class Reader(object):
         start = time.time()
         # for doc in self.nlp.pipe(paragraphs, batch_size=2, n_process=4):
         #     matrix_list.append(self.__featurize(doc, query_list, counter))
-        matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), query_set, counter)
+        matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), set(query_list), counter)
         matrix_arr = np.vstack(matrix_list)
+        print(matrix_arr.shape)
         matrix_arr = np.hstack([aligned_matrix, p_embeddings, matrix_arr])
         print(matrix_arr.shape)
         matrix_arr[:, -3:] = matrix_arr[:, -3:]/np.linalg.norm(matrix_arr[:, -3:], axis=1)[:, None]
@@ -198,7 +202,7 @@ class Reader(object):
             matrix_list.append(self.__featurize(doc, query_set, counter))
         return matrix_list
     
-    def preprocess_parallel(self, texts, num_texts: int, query_set: list[str], counter: Counter, chunksize: int = 70, n_jobs: int = 7) -> list[np.ndarray]:
+    def preprocess_parallel(self, texts, num_texts: int, query_set: set[str], counter: Counter, chunksize: int = 70, n_jobs: int = 7) -> list[np.ndarray]:
         executor = Parallel(n_jobs=n_jobs, backend='multiprocessing', prefer='processes', max_nbytes=None)
         do = delayed(self.process_chunk)
         tasks = (do(chunk, query_set, counter) for chunk in self.chunker(texts, num_texts, chunksize=chunksize))
