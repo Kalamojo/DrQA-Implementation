@@ -113,13 +113,12 @@ class Reader(object):
         #spacy.prefer_gpu()
         self.nlp = spacy.load("en_core_web_sm", exclude=['parser'])
         self.nlp.tokenizer = NLTKCustomTokenizer(self.nlp.vocab)
-        self.aligner = Aligner(self.embedder.dimensions, None)
+        self.aligner = Aligner(self.embedder.dimensions)
         self.train = False
 
     def train_reader(self, doc_retriever: Retriever, squad_path: str, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], num_docs = 5, num_questions: int = 100):
         questions_list = [TreebankWordTokenizer().tokenize(question[0]) for question in questions]
         max_words = max(len(q_list) for q_list in questions_list)
-        self.aligner.create_question_encoder(input_shape=(self.embedder.dimensions, 1))
         self.aligner.q_encoder.summary()
         self.aligner.q_aligner.summary()
         
@@ -133,11 +132,11 @@ class Reader(object):
                 retrieved_docs.pop()
                 retrieved_docs.append(doc)
             
-            paragraph_vectors, query_vector = self.__construct_vectors(retrieved_docs, questions_list[i], max_words, False)
+            paragraph_vectors, query_vector = self.__construct_vectors(retrieved_docs, set(questions_list[i]), max_words, False)
             print(paragraph_vectors.shape, query_vector.shape)
             return;
 
-    def __construct_vectors(self, documents: list[str], query_list: list[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
+    def __construct_vectors(self, documents: list[str], query_set: set[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
         matrix_list = []
         
         zeroes = np.zeros((pad_size - len(query_list), self.embedder.dimensions))
@@ -152,7 +151,15 @@ class Reader(object):
         joined_documents = '\n\n\n\n'.join(documents)
         all_words = chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(joined_documents))
         counter = Counter(all_words)
-        
+
+        p_embeddings = np.array([self.embedder.embed(word) for word in all_words])
+        n_in = p_embeddings.shape[0]
+        input_dim = p_embeddings.shape[1]
+        p_embeddings = p_embeddings.reshape((n_in, input_dim, 1))
+        print(p_embeddings.shape)
+        aligned_matrix = self.aligner.q_aligner([query_embedding, p_embeddings], training=self.train)=
+        print(aligned_matrix.shape)
+
         paragraphs = list(filter(None, joined_documents.split('\n')))
         
         #print(len(paragraphs))
@@ -160,41 +167,23 @@ class Reader(object):
         start = time.time()
         # for doc in self.nlp.pipe(paragraphs, batch_size=2, n_process=4):
         #     matrix_list.append(self.__featurize(doc, query_list, counter))
-        matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), query_embedding, query_list, counter)
-        matrix_list = np.vstack(matrix_list)
-        print(matrix_list.shape)
-        matrix_list[:, -3:] = matrix_list[:, -3:]/np.linalg.norm(matrix_list[:, -3:], axis=1)[:, None]
+        matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), query_set, counter)
+        matrix_arr = np.vstack(matrix_list)
+        matrix_arr = np.hstack([aligned_matrix, p_embeddings, matrix_arr])
+        print(matrix_arr.shape)
+        matrix_arr[:, -3:] = matrix_arr[:, -3:]/np.linalg.norm(matrix_arr[:, -3:], axis=1)[:, None]
         #matrix_list.append(matrix)
         
         end = time.time()
         print("took", end - start, "seconds")
-        return matrix_list, query_ind_embedding
+        return matrix_arr, query_ind_embedding
 
-    def __featurize(self, doc: Doc, query_embedding: np.ndarray, query_list: list[str], counter: Counter) -> list[np.ndarray]:
+    def __featurize(self, doc: Doc, query_set: set[str], counter: Counter) -> list[np.ndarray]:
         matrix = []
         for token in doc:
-            # if count % 1000 == 0:
-            #     print("Current count:", count)
-            #print("is it even entering")
-            p_embedding = self.embedder.embed(token.text)
-            #print("embedded")
-            match_vec = self.__exact_match(token, query_list)
-            # #print("matched")
+            match_vec = self.__exact_match(token, query_set)
             token_vec = self.__token_feature(token, counter[token.text])
-            # print("featured")
-            # print(p_embedding.shape)
-            # print((p_embedding.shape[0], p_embedding.shape[1], 1))
-            p_embedding_shaped = p_embedding.reshape((1, p_embedding.shape[0], 1))
-            #print("starting aligning")
-            aligned_vec = self.aligner.q_aligner([query_embedding, p_embedding_shaped], training=self.train)
-            #print("done aligning")
-            #print(aligned_vec)
-            #print(aligned_vec.shape)
-            matrix.append(np.concatenate((aligned_vec, p_embedding, match_vec, token_vec)))
-            #matrix.append(np.concatenate((p_embedding, match_vec, token_vec)))
-            #matrix_list.append(p_embedding)
-            #count += 1
-            #print(matrix[-1].shape)
+            matrix.append(np.concatenate((match_vec, token_vec)))
         return matrix
     
     def chunker(self, iterable, total_length, chunksize):
@@ -203,16 +192,16 @@ class Reader(object):
     def flatten(self, list_of_lists: list[list]) -> list:
         return [item for sublist in list_of_lists for item in sublist]
     
-    def process_chunk(self, texts, query_embedding: np.ndarray, query_list: list[str], counter: Counter) -> list[list[np.ndarray]]:
+    def process_chunk(self, texts, query_set: set[str], counter: Counter) -> list[list[np.ndarray]]:
         matrix_list = []
         for doc in self.nlp.pipe(texts, batch_size=20):
-            matrix_list.append(self.__featurize(doc, query_embedding, query_list, counter))
+            matrix_list.append(self.__featurize(doc, query_set, counter))
         return matrix_list
     
-    def preprocess_parallel(self, texts, num_texts: int, query_embedding: np.ndarray, query_list: list[str], counter: Counter, chunksize: int = 70, n_jobs: int = 7) -> list[np.ndarray]:
+    def preprocess_parallel(self, texts, num_texts: int, query_set: list[str], counter: Counter, chunksize: int = 70, n_jobs: int = 7) -> list[np.ndarray]:
         executor = Parallel(n_jobs=n_jobs, backend='multiprocessing', prefer='processes', max_nbytes=None)
         do = delayed(self.process_chunk)
-        tasks = (do(chunk, query_embedding, query_list, counter) for chunk in self.chunker(texts, num_texts, chunksize=chunksize))
+        tasks = (do(chunk, query_set, counter) for chunk in self.chunker(texts, num_texts, chunksize=chunksize))
         result = executor(tasks)
         return self.flatten(result)
 
@@ -224,7 +213,7 @@ class Reader(object):
         common_words, counts = zip(*counter.most_common(common_count))
         self.embedder.fine_tune(common_words, documents, max_iterations=2000, vocab_save=vocab_save, embed_save=embed_save)
 
-    def __exact_match(self, word: Token, question: list[str]) -> np.ndarray:
+    def __exact_match(self, word: Token, question: set[str]) -> np.ndarray:
         og = int(word.text in question)
         low = int(word.text.lower() in question)
         lem = int(word.lemma_ in question)

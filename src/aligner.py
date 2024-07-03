@@ -35,20 +35,23 @@ class AlignmentLayer(Layer):
         # Alignment scores
         #print(K.permute_dimensions(weighted_q, (1, 0)).shape)
         #scores = K.dot(weighted_q, K.permute_dimensions(weighted_p, (0, 2, 1)))
-        scores = tf.einsum('ijk,kjk->ij', weighted_q, weighted_p)
-        # print(scores.shape)
-        # print("cuh")
-        scores = K.sum(scores, axis=0)
+        scores = tf.einsum('ijk,ljk->lij', weighted_q, weighted_p)
+        # print("cuh scores", scores.shape)
+        #print("cuh")
+        scores = K.sum(scores, axis=1)
         # print("scores", scores.shape)
         # Compute the weights
         alpha = K.softmax(scores)
         alpha = K.expand_dims(alpha, axis=-1)
         # print("alpha.shape", alpha.shape)
-        context = embed_q * alpha
+        #context = embed_q * alpha
+        context = tf.einsum('ijk,ljk->ljk', embed_q, alpha)
         # print("context", context.shape)
-        context = K.sum(context, axis=0)
-        context = K.squeeze(context, axis=-1)
+        # context = K.sum(context, axis=0)
         # print("new context", context.shape)
+        context = K.squeeze(context, axis=-1)
+
+        # print("newest", context.shape)
         return context
 
 @tf.keras.utils.register_keras_serializable(package='Attender')
@@ -80,26 +83,23 @@ class Attention(Layer):
         return context
 
 class Aligner(object):
-    def __init__(self, embed_dim: int, q_encoder_shape: tuple = None) -> None:
+    def __init__(self, embed_dim: int) -> None:
         self.embed_dim = embed_dim
-        self.create_question_aligner()
-        self.create_question_encoder(input_shape=q_encoder_shape)
+        self.q_aligner = self.create_question_aligner()
+        self.q_encoder = self.create_question_encoder()
 
-    def create_question_aligner(self) -> None:
+    def create_question_aligner(self) -> Model:
         x_q = Input(shape=(self.embed_dim, 1))
         x_p = Input(shape=(self.embed_dim, 1))
         alignment_layer = AlignmentLayer()([x_q, x_p])
         model = Model([x_q, x_p], alignment_layer, name="Question_Aligner")
         #print("expected", (1, input_shape[0][0]))
         # print("actual", model.output_shape)
-        assert model.output_shape == (self.embed_dim,)
-        self.q_aligner = model
+        assert model.output_shape == (None, self.embed_dim)
+        return model
 
-    def create_question_encoder(self, input_shape: tuple = None, hidden_units: int = 20, activation: str = "tanh") -> None:
-        if input_shape is None:
-            return;
-        
-        x = Input(shape=input_shape)
+    def create_question_encoder(self, hidden_units: int = 20, activation: str = "tanh") -> Model:
+        x = Input(shape=(self.embed_dim, 1))
         RNN_layer = SimpleRNN(hidden_units, return_sequences=True, activation=activation)(x)
         attention_layer = Attention()(RNN_layer)
         model = Model(x, attention_layer, name="Question_Encoder")
@@ -107,7 +107,7 @@ class Aligner(object):
         # print("expected", (1, input_shape[0]))
         # print("actual", model.output_shape)
         assert model.output_shape == (None, hidden_units)
-        self.q_encoder = model
+        return model
     
     def load_checkpoint(self, checkpoint_dir: str = None) -> tf.train.Checkpoint:
         if checkpoint_dir is None:

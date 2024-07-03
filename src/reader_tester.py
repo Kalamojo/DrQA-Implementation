@@ -4,6 +4,8 @@ import spacy
 import json
 from nltk import word_tokenize, TreebankWordTokenizer, NLTKWordTokenizer, string_span_tokenize, WordPunctTokenizer, sent_tokenize, PunktSentenceTokenizer
 from itertools import chain
+# from aligner import Aligner, AlignmentLayer, Attention
+# import numpy as np
 
 def fineTune(reader, retriever):
     with open("./data/train-v1.1.json", "r") as f:
@@ -22,6 +24,16 @@ def main():
 
     pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
     doc_reader.train_reader(doc_retriever, "./data/train-v1.1.json", pages, questions, answers)
+
+    # aligner = Aligner(embed_dim=300)
+    # aligner.q_encoder.summary()
+    # aligner.q_aligner.summary()
+
+    # query_embedding = np.random.rand(59, 300, 1)
+    # p_matrix = np.random.rand(1021, 300, 1)
+    # aligned_vec = aligner.q_aligner([query_embedding, p_matrix], training=False)
+    # print(aligned_vec)
+    # print(aligned_vec.shape)
 
     # ind = 4365
     # print(questions[ind])
