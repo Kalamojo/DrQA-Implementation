@@ -10,6 +10,7 @@ from spacy.vocab import Vocab
 from spacy.tokens import Token, Doc
 from collections import Counter
 from itertools import chain
+from collections.abc import Iterator, Generator
 import warnings
 import time
 from joblib import Parallel, delayed
@@ -116,28 +117,83 @@ class Reader(object):
         self.aligner = Aligner(self.embedder.dimensions)
         self.train = False
 
-    def train_reader(self, doc_retriever: Retriever, squad_path: str, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], num_docs = 5, num_questions: int = 100):
+    def train_reader(self, doc_retriever: Retriever, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], num_docs = 5, num_questions: int = 100):
         questions_list = [TreebankWordTokenizer().tokenize(question[0]) for question in questions]
         max_words = max(len(q_list) for q_list in questions_list)
         self.aligner.q_encoder.summary()
         self.aligner.q_aligner.summary()
         
         for i in range(len(questions)):
-            doc = documents[questions[i][1]]
-            title = doc[:doc.find('\n\n\n')]
-            retrieved_docs = doc_retriever.get_squad_docs(questions[i][0], squad_path, num_docs)
+            correct_doc = documents[questions[i][1]]
+            correct_title = correct_doc[:correct_doc.find('\n\n\n')]
+            retrieved_docs = [documents[j] for j in doc_retriever.retrieve_docs(questions[i][0], num_docs)]
             #print(retrieved_docs)
+            correct_ind = -1
             titles = [d[:d.find('\n\n\n')] for d in retrieved_docs]
-            if title not in titles:
+            for j in range(num_docs):
+                if titles[j] == correct_title:
+                    correct_ind = j
+                    break;
+            if correct_ind == -1:
                 retrieved_docs.pop()
-                retrieved_docs.append(doc)
+                retrieved_docs.append(correct_doc)
+                correct_ind = num_docs - 1
             
-            paragraph_vectors, query_vector = self.__construct_vectors(retrieved_docs, questions_list[i], max_words, False)
+            print("correct ind", correct_ind)
+            paragraphs = []
+            all_words = []
+            doc_offset = 0
+            token_lengths = 0
+            for j in range(num_docs):
+                if j == correct_ind:
+                    doc_offset = token_lengths
+                paragraph_list = list(filter(None, retrieved_docs[j].split('\n\n')))
+                #words = list(self.__get_tokenized(retrieved_docs[j]))
+                words = self.flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
+                paragraphs += paragraph_list
+                all_words += words
+                token_lengths += len(words)
+
+            print("paragraphs:", len(paragraphs))
+            print("words:", len(all_words))
+            print(answers[i])
+            print(questions[i])
+            #print(list(self.__get_tokenized_spans(correct_doc)))
+            for answer in answers[i]:
+                answer_span = self.__get_answer_span(answer, self.__get_tokenized_spans(correct_doc))
+                print(answer_span)
+                print([all_words[doc_offset+j] for j in range(answer_span[0], answer_span[1]+1)])
+                print(correct_doc[answer[0]: answer[1]])
+            paragraph_vectors, query_vector = self.__construct_vectors(paragraphs, all_words, questions_list[i], max_words, False)
             print(paragraph_vectors.shape, query_vector.shape)
             return;
 
-    def __construct_vectors(self, documents: list[str], query_list: list[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
+    def __get_answer_span(self, answer: tuple[int, int], spans: Iterator[tuple[int, int]]) -> tuple[int, int]:
+        start = -1
+        end = -1
+        ind = 0
+        print(answer)
+        for span in spans:
+            if start == -1 and span[0] >= answer[0]:
+                if span[0] == answer[0]: 
+                    start = ind
+                else:
+                    print("not exact start")
+                    start = ind - 1
+            if span[1] >= answer[1]:
+                if span[1] != answer[1]: 
+                    print("not exact end")
+                end = ind
+                break;
+            ind += 1
+        return start, end
+    
+    def __get_tokenized_spans(self, corpus: str):
+        return chain.from_iterable(((start+sent_start, end+sent_start) for start, end in TreebankWordTokenizer().span_tokenize(corpus[sent_start:sent_end])) for sent_start, sent_end in PunktSentenceTokenizer().span_tokenize(corpus))
+
+    def __construct_vectors(self, paragraphs: list[str], all_words: list[str], query_list: list[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
         matrix_list = []
+        start = time.time()
         
         zeroes = np.zeros((pad_size - len(query_list), self.embedder.dimensions))
         query_embedding = np.concatenate((zeroes, np.array([self.embedder.embed(word) for word in query_list]))).reshape((pad_size, self.embedder.dimensions, 1))
@@ -148,13 +204,12 @@ class Reader(object):
         #print(query_ind_embedding)
         #print(query_ind_embedding.shape)
 
-        joined_documents = '\n\n\n\n'.join(documents)
-        all_words = chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(joined_documents))
+        # joined_documents = '\n\n\n\n'.join(documents)
+        # all_words = list(self.__get_tokenized(joined_documents))
 
         counter = Counter(all_words)
 
-        all_words_copy = chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(joined_documents))
-        p_embeddings = np.array([self.embedder.embed(word) for word in all_words_copy])
+        p_embeddings = np.array(list(map(self.embedder.embed, all_words)))
         print(p_embeddings.shape)
         n_in = p_embeddings.shape[0]
         input_dim = p_embeddings.shape[1]
@@ -163,11 +218,11 @@ class Reader(object):
         aligned_matrix = self.aligner.q_aligner([query_embedding, p_embeddings_shaped], training=self.train)
         print(aligned_matrix.shape)
 
-        paragraphs = list(filter(None, joined_documents.split('\n')))
+        # paragraphs = list(filter(None, joined_documents.split('\n')))
         
         #print(len(paragraphs))
         #count = 0
-        start = time.time()
+        
         # for doc in self.nlp.pipe(paragraphs, batch_size=2, n_process=4):
         #     matrix_list.append(self.__featurize(doc, query_list, counter))
         matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), set(query_list), counter)
@@ -190,11 +245,12 @@ class Reader(object):
             matrix.append(np.concatenate((match_vec, token_vec)))
         return matrix
     
-    def chunker(self, iterable, total_length, chunksize):
+    def chunker(self, iterable, total_length, chunksize) -> Generator:
         return (iterable[pos: pos + chunksize] for pos in range(0, total_length, chunksize))
     
     def flatten(self, list_of_lists: list[list]) -> list:
         return [item for sublist in list_of_lists for item in sublist]
+        #return list(chain.from_iterable(list_of_lists))
     
     def process_chunk(self, texts, query_set: set[str], counter: Counter) -> list[list[np.ndarray]]:
         matrix_list = []
@@ -202,7 +258,7 @@ class Reader(object):
             matrix_list.append(self.__featurize(doc, query_set, counter))
         return matrix_list
     
-    def preprocess_parallel(self, texts, num_texts: int, query_set: set[str], counter: Counter, chunksize: int = 70, n_jobs: int = 7) -> list[np.ndarray]:
+    def preprocess_parallel(self, texts, num_texts: int, query_set: set[str], counter: Counter, chunksize: int = 80, n_jobs: int = 7) -> list[np.ndarray]:
         executor = Parallel(n_jobs=n_jobs, backend='multiprocessing', prefer='processes', max_nbytes=None)
         do = delayed(self.process_chunk)
         tasks = (do(chunk, query_set, counter) for chunk in self.chunker(texts, num_texts, chunksize=chunksize))
@@ -211,11 +267,14 @@ class Reader(object):
 
     def fine_tune_embedder(self, documents: list[str], common_count: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
         joined_docs = ' '.join(documents)
-        all_words = chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(joined_docs))
+        all_words = self.__get_tokenized(joined_docs)
         print("nltk done tokenizing")
         counter = Counter(all_words)
         common_words, counts = zip(*counter.most_common(common_count))
         self.embedder.fine_tune(common_words, documents, max_iterations=2000, vocab_save=vocab_save, embed_save=embed_save)
+    
+    def __get_tokenized(self, corpus: str) -> Iterator:
+        return chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(corpus))
 
     def __exact_match(self, word: Token, question: set[str]) -> np.ndarray:
         og = int(word.text in question)

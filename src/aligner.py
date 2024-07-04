@@ -11,9 +11,9 @@ class AlignmentLayer(Layer):
         super(AlignmentLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        self.W = self.add_weight(name="attention_weight", shape=(input_shape[0][-1], 1),
+        self.W = self.add_weight(name="alignment_weight", shape=(input_shape[0][-1], 1),
             initializer="random_normal", trainable=True)
-        self.b = self.add_weight(name="attention_bias", shape=(input_shape[0][1], 1),
+        self.b = self.add_weight(name="alignment_bias", shape=(input_shape[0][1], 1),
             initializer="zeros", trainable=True)
         super(AlignmentLayer, self).build(input_shape)
 
@@ -81,6 +81,8 @@ class Attention(Layer):
         context = x * alpha
         context = K.sum(context, axis=1)
         return context
+
+
 
 class Aligner(object):
     def __init__(self, embed_dim: int) -> None:
