@@ -49,7 +49,7 @@ class AlignmentLayer(Layer):
         # print("context", context.shape)
         # context = K.sum(context, axis=0)
         # print("new context", context.shape)
-        context = K.squeeze(context, axis=-1)
+        # context = K.squeeze(context, axis=-1)
 
         # print("newest", context.shape)
         return context
@@ -79,16 +79,68 @@ class Attention(Layer):
         alpha = K.expand_dims(alpha, axis=-1)
         # Compute context vector
         context = x * alpha
+        #print("context shape", context.shape)
         context = K.sum(context, axis=1)
-        return context
+        # Extra stuff
+        #print("new context shape", context.shape)
+        new_context = K.expand_dims(K.sum(context, axis=0), axis=-1)
+        #print("even newer context shape", new_context.shape)
+        summation = K.dot(x, new_context)
+        #print("old summation shape", summation.shape)
+        summation = K.sum(summation, axis=0, keepdims=True)
+        #print("new summation shape", summation.shape)
+        return summation
 
+@tf.keras.utils.register_keras_serializable(package='S-Predictor')
+class StartPredictor(Layer):
+    def __init__(self, **kwargs):
+        super(StartPredictor, self).__init__(**kwargs)
+    
+    def build(self, input_shape):
+        self.W = self.add_weight(name="start_prob_weight", shape=(input_shape[0][-1], 1),
+            initializer="random_normal", trainable=True)
+        super(StartPredictor, self).build(input_shape)
+    
+    def call(self, x):
+        p_matrix, q_vector = x
+        #print("input shapes:", p_matrix.shape, q_vector.shape)
+        product = K.dot(p_matrix, self.W)
+        #print("product shape", product.shape)
+        #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
+        product = tf.einsum('ijk,lmk->ik', product, q_vector)
+        product = K.tanh(product)
+        #print("new product shape", product.shape)
+        return product
 
+@tf.keras.utils.register_keras_serializable(package='E-Predictor')
+class EndPredictor(Layer):
+    def __init__(self, **kwargs):
+        super(EndPredictor, self).__init__(**kwargs)
+    
+    def build(self, input_shape):
+        self.W = self.add_weight(name="end_prob_weight", shape=(input_shape[0][-1], 1),
+            initializer="random_normal", trainable=True)
+        super(EndPredictor, self).build(input_shape)
+    
+    def call(self, x):
+        p_matrix, q_vector = x
+        #print("input shapes:", p_matrix.shape, q_vector.shape)
+        product = K.dot(p_matrix, self.W)
+        #print("product shape", product.shape)
+        #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
+        product = tf.einsum('ijk,lmk->ik', product, q_vector)
+        product = K.tanh(product)
+        #print("new product shape", product.shape)
+        return product
 
 class Aligner(object):
-    def __init__(self, embed_dim: int) -> None:
+    def __init__(self, embed_dim: int, feature_dim: int) -> None:
         self.embed_dim = embed_dim
+        self.feature_dim = feature_dim
         self.q_aligner = self.create_question_aligner()
         self.q_encoder = self.create_question_encoder()
+        self.start_pred = self.create_start_predictor()
+        self.end_pred = self.create_end_predictor()
 
     def create_question_aligner(self) -> Model:
         x_q = Input(shape=(self.embed_dim, 1))
@@ -97,7 +149,7 @@ class Aligner(object):
         model = Model([x_q, x_p], alignment_layer, name="Question_Aligner")
         #print("expected", (1, input_shape[0][0]))
         # print("actual", model.output_shape)
-        assert model.output_shape == (None, self.embed_dim)
+        assert model.output_shape == (None, self.embed_dim, 1)
         return model
 
     def create_question_encoder(self, hidden_units: int = 20, activation: str = "tanh") -> Model:
@@ -108,7 +160,23 @@ class Aligner(object):
         # print("input", input_shape)
         # print("expected", (1, input_shape[0]))
         # print("actual", model.output_shape)
-        assert model.output_shape == (None, hidden_units)
+        assert model.output_shape == (1, self.embed_dim, 1)
+        return model
+    
+    def create_start_predictor(self) -> Model:
+        x_p = Input(shape=(self.embed_dim * 2 + self.feature_dim, 1))
+        x_q = Input(shape=(self.embed_dim, 1))
+        start_predictor = StartPredictor()([x_p, x_q])
+        model = Model([x_p, x_q], start_predictor, name="Start_Predictor")
+        assert model.output_shape == (None, 1)
+        return model
+    
+    def create_end_predictor(self) -> Model:
+        x_p = Input(shape=(self.embed_dim * 2 + self.feature_dim, 1))
+        x_q = Input(shape=(self.embed_dim, 1))
+        start_predictor = EndPredictor()([x_p, x_q])
+        model = Model([x_p, x_q], start_predictor, name="End_Predictor")
+        assert model.output_shape == (None, 1)
         return model
     
     def load_checkpoint(self, checkpoint_dir: str = None) -> tf.train.Checkpoint:
@@ -117,8 +185,14 @@ class Aligner(object):
         
         q_aligner_optimizer = keras.optimizers.Adam(0.001)
         q_encoder_optimizer = keras.optimizers.Adam(0.001)
+        start_pred_optimizer = keras.optimizers.Adam(0.001)
+        end_pred_optimizer = keras.optimizers.Adam(0.001)
         self.checkpoint_prefix = os.path.join(checkpoint_dir, 'ckpt')
         return tf.train.Checkpoint(q_aligner_optimizer=q_aligner_optimizer,
                                     q_encoder_optimizer=q_encoder_optimizer,
+                                    start_pred_optimizer=start_pred_optimizer,
+                                    end_pred_optimizer=end_pred_optimizer,
                                     q_aligner=self.q_aligner,
-                                    q_encoder=self.q_encoder)
+                                    q_encoder=self.q_encoder,
+                                    start_pred=self.start_pred,
+                                    end_pred=self.end_pred)

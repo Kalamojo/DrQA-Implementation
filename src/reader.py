@@ -114,7 +114,8 @@ class Reader(object):
         #spacy.prefer_gpu()
         self.nlp = spacy.load("en_core_web_sm", exclude=['parser'])
         self.nlp.tokenizer = NLTKCustomTokenizer(self.nlp.vocab)
-        self.aligner = Aligner(self.embedder.dimensions)
+        self.feature_dim = 6
+        self.aligner = Aligner(self.embedder.dimensions, self.feature_dim)
         self.train = False
 
     def train_reader(self, doc_retriever: Retriever, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], num_docs = 5, num_questions: int = 100):
@@ -166,6 +167,17 @@ class Reader(object):
                 print(correct_doc[answer[0]: answer[1]])
             paragraph_vectors, query_vector = self.__construct_vectors(paragraphs, all_words, questions_list[i], max_words, False)
             print(paragraph_vectors.shape, query_vector.shape)
+
+            print("start pred")
+            start_matrix = self.aligner.start_pred([paragraph_vectors, query_vector], training=self.train)
+            print(start_matrix)
+            print(start_matrix.shape)
+            print("start index:", np.argmax(start_matrix))
+            print("end pred")
+            end_matrix = self.aligner.end_pred([paragraph_vectors, query_vector], training=self.train)
+            print(end_matrix)
+            print(end_matrix.shape)
+            print("end index:", np.argmax(end_matrix))
             return;
 
     def __get_answer_span(self, answer: tuple[int, int], spans: Iterator[tuple[int, int]]) -> tuple[int, int]:
@@ -228,7 +240,7 @@ class Reader(object):
         matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), set(query_list), counter)
         matrix_arr = np.vstack(matrix_list)
         print(matrix_arr.shape)
-        matrix_arr = np.hstack([aligned_matrix, p_embeddings, matrix_arr])
+        matrix_arr = np.hstack([aligned_matrix, p_embeddings_shaped, matrix_arr.reshape(matrix_arr.shape[0], matrix_arr.shape[1], 1)])
         print(matrix_arr.shape)
         matrix_arr[:, -3:] = matrix_arr[:, -3:]/np.linalg.norm(matrix_arr[:, -3:], axis=1)[:, None]
         #matrix_list.append(matrix)
