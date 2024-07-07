@@ -3,6 +3,7 @@ from tensorflow import keras
 from keras import Input, Model
 from keras.layers import Layer, SimpleRNN
 import keras.backend as K
+import numpy as np
 import os
 
 @tf.keras.utils.register_keras_serializable(package='Aligner')
@@ -108,7 +109,7 @@ class StartPredictor(Layer):
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
         product = tf.einsum('ijk,lmk->ik', product, q_vector)
-        product = K.tanh(product)
+        product = product
         #print("new product shape", product.shape)
         return product
 
@@ -129,18 +130,30 @@ class EndPredictor(Layer):
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
         product = tf.einsum('ijk,lmk->ik', product, q_vector)
-        product = K.tanh(product)
+        product = product
         #print("new product shape", product.shape)
         return product
 
 class Aligner(object):
-    def __init__(self, embed_dim: int, feature_dim: int) -> None:
+    def __init__(self, embed_dim: int, feature_dim: int, lr: float = 0.001) -> None:
+        super(Aligner, self).__init__()
         self.embed_dim = embed_dim
         self.feature_dim = feature_dim
         self.q_aligner = self.create_question_aligner()
         self.q_encoder = self.create_question_encoder()
         self.start_pred = self.create_start_predictor()
         self.end_pred = self.create_end_predictor()
+        self.lr = lr
+        #self.optimizer = keras.optimizers.Adam(lr)
+        #print("Trainable variables:", self.trainable_variables)
+
+    def calculate_loss(self, pred, answer):
+        #print("Trainable variables:", self.trainable_variables)
+        if pred[0] > pred[1]:
+            return 2
+        inter = min(pred[1], answer[1]) - max(pred[0], answer[0])
+        union = max(pred[1], answer[1]) - min(pred[0], answer[0])
+        return 1 - (max(inter, 0) / (union + min(inter, 0)))
 
     def create_question_aligner(self) -> Model:
         x_q = Input(shape=(self.embed_dim, 1))
@@ -183,10 +196,11 @@ class Aligner(object):
         if checkpoint_dir is None:
             return None
         
-        q_aligner_optimizer = keras.optimizers.Adam(0.001)
-        q_encoder_optimizer = keras.optimizers.Adam(0.001)
-        start_pred_optimizer = keras.optimizers.Adam(0.001)
-        end_pred_optimizer = keras.optimizers.Adam(0.001)
+        #optimizer = keras.optimizers.Adam(self.lr)
+        q_aligner_optimizer = keras.optimizers.Adam(self.lr)
+        q_encoder_optimizer = keras.optimizers.Adam(self.lr)
+        start_pred_optimizer = keras.optimizers.Adam(self.lr)
+        end_pred_optimizer = keras.optimizers.Adam(self.lr)
         self.checkpoint_prefix = os.path.join(checkpoint_dir, 'ckpt')
         return tf.train.Checkpoint(q_aligner_optimizer=q_aligner_optimizer,
                                     q_encoder_optimizer=q_encoder_optimizer,
@@ -196,3 +210,8 @@ class Aligner(object):
                                     q_encoder=self.q_encoder,
                                     start_pred=self.start_pred,
                                     end_pred=self.end_pred)
+        # return tf.train.Checkpoint(optimizer=optimizer,
+        #                             q_aligner=self.q_aligner,
+        #                             q_encoder=self.q_encoder,
+        #                             start_pred=self.start_pred,
+        #                             end_pred=self.end_pred)

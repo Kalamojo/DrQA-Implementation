@@ -1,4 +1,4 @@
-from aligner import Aligner, AlignmentLayer, Attention
+from aligner import Aligner
 from retriever import Retriever
 import csv
 import numpy as np
@@ -160,24 +160,32 @@ class Reader(object):
             print(answers[i])
             print(questions[i])
             #print(list(self.__get_tokenized_spans(correct_doc)))
+            answer_spans = []
             for answer in answers[i]:
                 answer_span = self.__get_answer_span(answer, self.__get_tokenized_spans(correct_doc))
                 print(answer_span)
                 print([all_words[doc_offset+j] for j in range(answer_span[0], answer_span[1]+1)])
                 print(correct_doc[answer[0]: answer[1]])
+                answer_spans.append((answer_span[0]+doc_offset, answer_span[1]+doc_offset))
+            print("Real indices:", answer_spans)
             paragraph_vectors, query_vector = self.__construct_vectors(paragraphs, all_words, questions_list[i], max_words, False)
             print(paragraph_vectors.shape, query_vector.shape)
 
             print("start pred")
             start_matrix = self.aligner.start_pred([paragraph_vectors, query_vector], training=self.train)
-            print(start_matrix)
-            print(start_matrix.shape)
-            print("start index:", np.argmax(start_matrix))
+            # print(start_matrix)
+            # print(start_matrix.shape)
+            # print("start index:", np.argmax(start_matrix))
             print("end pred")
             end_matrix = self.aligner.end_pred([paragraph_vectors, query_vector], training=self.train)
-            print(end_matrix)
-            print(end_matrix.shape)
-            print("end index:", np.argmax(end_matrix))
+            # print(end_matrix)
+            # print(end_matrix.shape)
+            # print("end index:", np.argmax(end_matrix))
+            pred = (np.argmax(start_matrix), np.argmax(end_matrix))
+            print("pred:", pred)
+            for span in answer_spans:
+                print("ans span:", span)
+                print("Prediction loss:", self.aligner.calculate_loss(pred, span))
             return;
 
     def __get_answer_span(self, answer: tuple[int, int], spans: Iterator[tuple[int, int]]) -> tuple[int, int]:
