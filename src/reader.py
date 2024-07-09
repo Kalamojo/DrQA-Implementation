@@ -16,6 +16,7 @@ import time
 from joblib import Parallel, delayed
 import tensorflow as tf
 tf.compat.v1.enable_eager_execution()
+# tf.compat.v1.disable_v2_behavior()
 
 class Embedder(object):
     def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None) -> None:
@@ -123,6 +124,8 @@ class Reader(object):
         max_words = max(len(q_list) for q_list in questions_list)
         self.aligner.q_encoder.summary()
         self.aligner.q_aligner.summary()
+        self.aligner.start_pred.summary()
+        self.aligner.end_pred.summary()
         
         for i in range(len(questions)):
             correct_doc = documents[questions[i][1]]
@@ -166,26 +169,52 @@ class Reader(object):
                 print(answer_span)
                 print([all_words[doc_offset+j] for j in range(answer_span[0], answer_span[1]+1)])
                 print(correct_doc[answer[0]: answer[1]])
-                answer_spans.append((answer_span[0]+doc_offset, answer_span[1]+doc_offset))
+                #answer_spans.append((answer_span[0]+doc_offset, answer_span[1]+doc_offset))
+                answer_spans.append((answer_span[0]+doc_offset, answer_span[1]+doc_offset+1))
             print("Real indices:", answer_spans)
-            paragraph_vectors, query_vector = self.__construct_vectors(paragraphs, all_words, questions_list[i], max_words, False)
-            print(paragraph_vectors.shape, query_vector.shape)
+            matrix_arr = self.__construct_vectors(paragraphs, all_words, questions_list[i])
+            
+            
+            zeroes = np.zeros((max_words - len(questions_list[i]), self.embedder.dimensions))
+            query_embedding = np.concatenate((zeroes, np.array(list(map(self.embedder.embed, questions_list[i])))), dtype=np.float32).reshape((max_words, self.embedder.dimensions, 1))
 
-            print("start pred")
-            start_matrix = self.aligner.start_pred([paragraph_vectors, query_vector], training=self.train)
-            # print(start_matrix)
-            # print(start_matrix.shape)
-            # print("start index:", np.argmax(start_matrix))
-            print("end pred")
-            end_matrix = self.aligner.end_pred([paragraph_vectors, query_vector], training=self.train)
-            # print(end_matrix)
-            # print(end_matrix.shape)
-            # print("end index:", np.argmax(end_matrix))
-            pred = (np.argmax(start_matrix), np.argmax(end_matrix))
-            print("pred:", pred)
-            for span in answer_spans:
-                print("ans span:", span)
-                print("Prediction loss:", self.aligner.calculate_loss(pred, span))
+
+            #query_vector = self.aligner.q_encoder(query_embedding, training=False)
+
+
+
+            p_embeddings = np.array(list(map(self.embedder.embed, all_words)), dtype=np.float32)
+            print(p_embeddings.shape)
+            p_embeddings_shaped = p_embeddings.reshape((p_embeddings.shape[0], p_embeddings.shape[1], 1))
+            print(p_embeddings_shaped.shape)
+
+
+            optimizer = tf.keras.optimizers.Adam(0.001)
+            self.aligner.train_step(query_embedding, p_embeddings_shaped, matrix_arr, answer_spans, optimizer, train=True)
+
+            # aligned_matrix = self.aligner.q_aligner([query_embedding, p_embeddings_shaped], training=self.train)
+            # print(aligned_matrix.shape)
+
+            # paragraph_vectors = np.hstack([aligned_matrix, p_embeddings_shaped, matrix_arr])
+            
+            
+            # print(paragraph_vectors.shape, query_vector.shape)
+
+            # print("start pred")
+            # start_matrix = self.aligner.start_pred([paragraph_vectors, query_vector], training=self.train)
+            # # print(start_matrix)
+            # # print(start_matrix.shape)
+            # # print("start index:", np.argmax(start_matrix))
+            # print("end pred")
+            # end_matrix = self.aligner.end_pred([paragraph_vectors, query_vector], training=self.train)
+            # # print(end_matrix)
+            # # print(end_matrix.shape)
+            # # print("end index:", np.argmax(end_matrix))
+            # pred = (np.argmax(start_matrix), np.argmax(end_matrix))
+            # print("pred:", pred)
+            # for span in answer_spans:
+            #     print("ans span:", span)
+            #     print("Prediction loss:", self.aligner.calculate_loss(pred, span))
             return;
 
     def __get_answer_span(self, answer: tuple[int, int], spans: Iterator[tuple[int, int]]) -> tuple[int, int]:
@@ -211,51 +240,21 @@ class Reader(object):
     def __get_tokenized_spans(self, corpus: str):
         return chain.from_iterable(((start+sent_start, end+sent_start) for start, end in TreebankWordTokenizer().span_tokenize(corpus[sent_start:sent_end])) for sent_start, sent_end in PunktSentenceTokenizer().span_tokenize(corpus))
 
-    def __construct_vectors(self, paragraphs: list[str], all_words: list[str], query_list: list[str], pad_size: int, train = False) -> tuple[list[np.ndarray], np.ndarray]:
+    def __construct_vectors(self, paragraphs: list[str], all_words: list[str], query_list: list[str]) -> np.ndarray:
         matrix_list = []
         start = time.time()
-        
-        zeroes = np.zeros((pad_size - len(query_list), self.embedder.dimensions))
-        query_embedding = np.concatenate((zeroes, np.array([self.embedder.embed(word) for word in query_list]))).reshape((pad_size, self.embedder.dimensions, 1))
-        #print(query_embedding)
-        #print(query_embedding.shape)
-        #return;
-        query_ind_embedding = self.aligner.q_encoder(query_embedding, training=train)
-        #print(query_ind_embedding)
-        #print(query_ind_embedding.shape)
-
-        # joined_documents = '\n\n\n\n'.join(documents)
-        # all_words = list(self.__get_tokenized(joined_documents))
 
         counter = Counter(all_words)
-
-        p_embeddings = np.array(list(map(self.embedder.embed, all_words)))
-        print(p_embeddings.shape)
-        n_in = p_embeddings.shape[0]
-        input_dim = p_embeddings.shape[1]
-        p_embeddings_shaped = p_embeddings.reshape((n_in, input_dim, 1))
-        print(p_embeddings_shaped.shape)
-        aligned_matrix = self.aligner.q_aligner([query_embedding, p_embeddings_shaped], training=self.train)
-        print(aligned_matrix.shape)
-
-        # paragraphs = list(filter(None, joined_documents.split('\n')))
-        
-        #print(len(paragraphs))
-        #count = 0
-        
-        # for doc in self.nlp.pipe(paragraphs, batch_size=2, n_process=4):
-        #     matrix_list.append(self.__featurize(doc, query_list, counter))
         matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), set(query_list), counter)
         matrix_arr = np.vstack(matrix_list)
         print(matrix_arr.shape)
-        matrix_arr = np.hstack([aligned_matrix, p_embeddings_shaped, matrix_arr.reshape(matrix_arr.shape[0], matrix_arr.shape[1], 1)])
+        matrix_arr = matrix_arr.reshape(matrix_arr.shape[0], matrix_arr.shape[1], 1)
         print(matrix_arr.shape)
         matrix_arr[:, -3:] = matrix_arr[:, -3:]/np.linalg.norm(matrix_arr[:, -3:], axis=1)[:, None]
-        #matrix_list.append(matrix)
         
         end = time.time()
         print("took", end - start, "seconds")
-        return matrix_arr, query_ind_embedding
+        return matrix_arr.astype(np.float32)
 
     def __featurize(self, doc: Doc, query_set: set[str], counter: Counter) -> list[np.ndarray]:
         matrix = []

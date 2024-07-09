@@ -6,7 +6,7 @@ import keras.backend as K
 import numpy as np
 import os
 
-@tf.keras.utils.register_keras_serializable(package='Aligner')
+@tf.keras.utils.register_keras_serializable(package='Q-Aligner')
 class AlignmentLayer(Layer):
     def __init__(self, **kwargs):
         super(AlignmentLayer, self).__init__(**kwargs)
@@ -55,7 +55,7 @@ class AlignmentLayer(Layer):
         # print("newest", context.shape)
         return context
 
-@tf.keras.utils.register_keras_serializable(package='Attender')
+@tf.keras.utils.register_keras_serializable(package='Q-Attender')
 class Attention(Layer):
     def __init__(self, **kwargs):
         super(Attention, self).__init__(**kwargs)
@@ -109,7 +109,9 @@ class StartPredictor(Layer):
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
         product = tf.einsum('ijk,lmk->ik', product, q_vector)
-        product = product
+        #print("prod:", product.shape)
+        product = K.squeeze(K.argmax(product, axis=0), axis=-1)
+        #print("prod arg:", product.shape)
         #print("new product shape", product.shape)
         return product
 
@@ -130,7 +132,7 @@ class EndPredictor(Layer):
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
         product = tf.einsum('ijk,lmk->ik', product, q_vector)
-        product = product
+        product = K.squeeze(K.argmax(product, axis=0), axis=-1) + 1
         #print("new product shape", product.shape)
         return product
 
@@ -144,16 +146,189 @@ class Aligner(object):
         self.start_pred = self.create_start_predictor()
         self.end_pred = self.create_end_predictor()
         self.lr = lr
-        #self.optimizer = keras.optimizers.Adam(lr)
-        #print("Trainable variables:", self.trainable_variables)
 
-    def calculate_loss(self, pred, answer):
-        #print("Trainable variables:", self.trainable_variables)
-        if pred[0] > pred[1]:
-            return 2
-        inter = min(pred[1], answer[1]) - max(pred[0], answer[0])
-        union = max(pred[1], answer[1]) - min(pred[0], answer[0])
-        return 1 - (max(inter, 0) / (union + min(inter, 0)))
+    @tf.function
+    def train_step(self, query_embedding: np.ndarray, paragraph_embeddings: np.ndarray, feature_matrix: np.ndarray, answer_spans: list[tuple[int, int]], optimizer, train: bool = True):
+        # q_aligner_optimizer = keras.optimizers.Adam(self.lr)
+        # q_encoder_optimizer = keras.optimizers.Adam(self.lr)
+        # start_pred_optimizer = keras.optimizers.Adam(self.lr)
+        # end_pred_optimizer = keras.optimizers.Adam(self.lr)
+        #optimizer = keras.optimizers.Adam(self.lr)
+
+        # with tf.GradientTape(persistent=True) as qe_tape:
+        #     qe_tape.watch(query_embedding)
+        #     query_vector = self.q_encoder(query_embedding, training=train)
+        # with tf.GradientTape(persistent=True) as qa_tape:
+        #     qa_tape.watch([query_embedding, paragraph_embeddings])
+        #     aligned_paragraph_matrix = self.q_aligner([query_embedding, paragraph_embeddings], training=train)
+        
+        # paragraph_vectors = tf.concat([aligned_paragraph_matrix, paragraph_embeddings, feature_matrix], axis=1)
+        # print("paragraph vec", paragraph_vectors.shape)
+        # with tf.GradientTape(persistent=True) as sp_tape, tf.GradientTape(persistent=True) as ep_tape:
+        #     print("start pred")
+        #     sp_tape.watch([paragraph_vectors, query_vector])
+        #     start_matrix = self.start_pred([paragraph_vectors, query_vector], training=train)
+        #     print("end pred")
+        #     ep_tape.watch([paragraph_vectors, query_vector])
+        #     end_matrix = self.end_pred([paragraph_vectors, query_vector], training=train)
+
+        #     prediction = tf.range(tf.argmax(start_matrix)[0], tf.argmax(end_matrix)[0]+1, dtype=tf.int64)
+        #     print("prediction_span:", prediction)
+        #     loss = self.calculate_loss(prediction, tf.range(answer_spans[0][0], answer_spans[0][1]+1, dtype=tf.int64))
+
+
+        q_embed = tf.Variable(tf.zeros_like(query_embedding))
+        p_embed = tf.Variable(tf.zeros_like(paragraph_embeddings))
+        f_matrix = tf.Variable(tf.zeros_like(feature_matrix))
+        answer_start = tf.Variable(tf.zeros_like(answer_spans[0][0], dtype=tf.int64))
+        answer_end = tf.Variable(tf.zeros_like(answer_spans[0][1], dtype=tf.int64))
+        #with tf.GradientTape() as qa_tape, tf.GradientTape() as qe_tape, tf.GradientTape() as sp_tape, tf.GradientTape() as ep_tape:
+        with tf.GradientTape() as tape:
+            tape.watch(q_embed)
+            tape.watch(p_embed)
+            tape.watch(f_matrix)
+            tape.watch(answer_start)
+            tape.watch(answer_end)
+            q_embed.assign(query_embedding)
+            print(query_embedding.shape, query_embedding.dtype)
+            print(q_embed)
+            #qe_tape.watch(query_embedding)
+            
+            query_vector = self.q_encoder(q_embed, training=train)
+            
+            p_embed.assign(paragraph_embeddings)
+            #qa_tape.watch([query_embedding, paragraph_embeddings])
+            aligned_paragraph_matrix = self.q_aligner([p_embed, paragraph_embeddings], training=train)
+            
+            f_matrix.assign(feature_matrix)
+            paragraph_vectors = tf.concat([aligned_paragraph_matrix, p_embed, f_matrix], axis=1)
+            print("paragraph vec", paragraph_vectors.shape)
+
+            print("start pred")
+            #sp_tape.watch([paragraph_vectors, query_vector])
+            start_matrix = self.start_pred([paragraph_vectors, query_vector], training=train)
+            print(start_matrix)
+            #print(tf.argmax(start_matrix))
+            # print(start_matrix)
+            # print(start_matrix.shape)
+            # print("start index:", np.argmax(start_matrix))
+            print("end pred")
+            #ep_tape.watch([paragraph_vectors, query_vector])
+            end_matrix = self.end_pred([paragraph_vectors, query_vector], training=train)
+            print(end_matrix)
+            # print(end_matrix)
+            # print(end_matrix.shape)
+            # print("end index:", np.argmax(end_matrix))
+            #prediction = tf.stack([tf.argmax(start_matrix)[0], tf.argmax(end_matrix)[0]])
+            
+            # prediction = tf.Variable(tf.zeros([], dtype=tf.int64))
+
+            # start_val = tf.Variable(tf.argmax(start_matrix)[0])
+            # end_val = tf.Variable(tf.argmax(end_matrix)[0]+1)
+            # if start_val > end_val:
+            #     #prediction.assign(tf.range(start_val, end_val, dtype=tf.int64))
+            #     start_val.assign(0)
+            #     end_val.assign(0)
+
+            #prediction = tf.Variable(tf.cast(tf.range(tf.argmax(start_matrix)[0], tf.argmax(end_matrix)[0]+1), dtype=tf.float32))
+            #print("prediction_span:", prediction)
+            # with tf.compat.v1.Session() as sess:
+            #     print(sess.run(prediction))
+
+            #answers = tf.Variable(tf.cast(tf.range(answer_spans[0][0], answer_spans[0][1]+1), dtype=tf.float32))
+            answer_start.assign(answer_spans[0][0])
+            answer_end.assign(answer_spans[0][1])
+            #tape.watch(prediction)
+            #tape.watch(answers)
+            print("stuff")
+            print(answer_start)
+            print(start_matrix)
+            #loss = self.calculate_loss(start_matrix, end_matrix, answer_start, answer_end)
+            loss = answer_start * 4
+            # for i in range(1, len(answer_spans)):
+            #     print("ans span:", answer_spans[i])
+            #     #loss = tf.reduce_min(tf.stack([loss, self.calculate_loss(prediction, tf.constant(answer_spans[i], dtype=tf.int64))]))
+            #     loss = tf.reduce_min(tf.stack([loss, self.calculate_loss(prediction, tf.range(answer_spans[i][0], answer_spans[i][1]+1, dtype=tf.int64))]))
+            #     #loss = min(loss, self.calculate_loss(prediction, tf.constant(answer, dtype=tf.int64)))
+            #loss = tf.reshape(loss, [1, 1])
+        print("loss:", loss)
+        
+        # variables = self.q_aligner.trainable_variables + self.q_encoder.trainable_variables + self.start_pred.trainable_variables + self.end_pred.trainable_variables
+        # gradients = tape.gradient(loss, variables)
+        # gradients_of_q_aligner = qa_tape.gradient(loss, self.q_aligner.trainable_variables)
+        # gradients_of_q_encoder = qe_tape.gradient(loss, self.q_encoder.trainable_variables)
+        # gradients_of_start_pred = sp_tape.gradient(loss, self.start_pred.trainable_variables)
+        # gradients_of_end_pred = ep_tape.gradient(loss, self.end_pred.trainable_variables)
+
+        print("grad stuff")
+        print(tape.gradient(loss, answer_start))
+        # print(gradients)
+        # print(variables)
+        # print(gradients_of_q_aligner)
+        # print(self.q_aligner.trainable_variables)
+        # print(gradients_of_q_encoder, gradients_of_start_pred, gradients_of_end_pred)
+
+        # optimizer.apply_gradients(zip(gradients, variables))
+        # q_aligner_optimizer.apply_gradients(zip(gradients_of_q_aligner, self.q_aligner.trainable_variables))
+        # q_encoder_optimizer.apply_gradients(zip(gradients_of_q_encoder, self.q_encoder.trainable_variables))
+        # start_pred_optimizer.apply_gradients(zip(gradients_of_start_pred, self.start_pred.trainable_variables))
+        # end_pred_optimizer.apply_gradients(zip(gradients_of_end_pred, self.end_pred.trainable_variables))
+        return loss
+
+    def calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: tf.Tensor, answer_end: tf.Tensor, smooth: float = 1.) -> tf.Tensor:
+        pred = tf.cast(tf.range(pred_start, pred_end), tf.float32)
+        answer = tf.cast(tf.range(answer_start, answer_end), tf.float32)
+        intersection = K.sum(K.abs(answer * pred), axis=-1)
+        sum_ = K.sum(K.abs(answer) + K.abs(pred), axis=-1)
+        jac = (intersection + smooth) / (sum_ - intersection + smooth)
+        return (1 - jac) * smooth
+
+        # smooth = 1.
+        # y_true_f = K.cast(K.flatten(answer), tf.float32)
+        # y_pred_f = K.cast(K.flatten(pred), tf.float32)
+        # intersection = K.sum(y_true_f * y_pred_f)
+        # score = (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+        # return 1 - score
+    
+
+        # tp = tf.reduce_sum(tf.matmul(answer, pred), 1)
+        # fn = tf.reduce_sum(tf.matmul(answer, 1-pred), 1)
+        # fp = tf.reduce_sum(tf.matmul(1-answer, pred), 1)
+        # return 1 - (tp / (tp + fn + fp))
+    
+        # # print(pred, answer)
+        # if pred_start > pred_end:
+        #     return tf.constant(2, dtype=tf.float64)
+        # #inter = min(pred[1], answer[1]) - max(pred[0], answer[0])
+        # inter = tf.reduce_min(tf.stack([pred_end, answer_end])) - tf.reduce_max(tf.stack([pred_start, answer_start]))
+        # #union = max(pred[1], answer[1]) - min(pred[0], answer[0])
+        # union = tf.reduce_max(tf.stack([pred_end, answer_end])) - tf.reduce_min(tf.stack([pred_start, answer_start]))
+        # #return 1 - (max(inter, 0) / (union + min(inter, 0)))
+        # #tf.divide(tf.reduce_max(tf.stack([inter, 0])), union + tf.reduce_min(tf.stack([inter, 0])))
+        # # return 1 - (tf.reduce_max(tf.stack([inter, 0])) / (union + tf.reduce_min(tf.stack([inter, 0]))))
+        # #return tf.cast(1 - tf.divide(tf.reduce_max(tf.stack([inter, 0])), union + tf.reduce_min(tf.stack([inter, 0]))))
+        # return 1 - (tf.reduce_max(tf.stack([inter, 0])) / (union + tf.reduce_min(tf.stack([inter, 0]))))
+        
+        
+        # """ Calculates mean of Jaccard distance as a loss function """
+        # intersection = tf.reduce_sum(answer * pred, axis=(1,2))
+        # sum_ = tf.reduce_sum(answer + pred, axis=(1,2))
+        # jac = (intersection + smooth) / (sum_ - intersection + smooth)
+        # jd =  (1 - jac) * smooth
+        # return tf.reduce_mean(jd)
+
+        # #flatten label and prediction tensors
+        # pred = K.flatten(pred)
+        # answer = K.expand_dims(answer, -1)
+        # print(pred)
+        # print(answer)
+        
+        # intersection = K.sum(K.dot(answer, pred))
+        # total = K.sum(answer) + K.sum(pred)
+        # union = total - intersection
+        
+        # IoU = (intersection + smooth) / (union + smooth)
+        # return 1 - IoU
 
     def create_question_aligner(self) -> Model:
         x_q = Input(shape=(self.embed_dim, 1))
@@ -181,7 +356,8 @@ class Aligner(object):
         x_q = Input(shape=(self.embed_dim, 1))
         start_predictor = StartPredictor()([x_p, x_q])
         model = Model([x_p, x_q], start_predictor, name="Start_Predictor")
-        assert model.output_shape == (None, 1)
+        #print("output shape:", model.output_shape)
+        assert model.output_shape == ()
         return model
     
     def create_end_predictor(self) -> Model:
@@ -189,14 +365,13 @@ class Aligner(object):
         x_q = Input(shape=(self.embed_dim, 1))
         start_predictor = EndPredictor()([x_p, x_q])
         model = Model([x_p, x_q], start_predictor, name="End_Predictor")
-        assert model.output_shape == (None, 1)
+        assert model.output_shape == ()
         return model
     
-    def load_checkpoint(self, checkpoint_dir: str = None) -> tf.train.Checkpoint:
+    def load_checkpoint(self, checkpoint_dir: str) -> tf.train.Checkpoint:
         if checkpoint_dir is None:
-            return None
+            raise ValueError("checkpoint_dir must not be 'None'. Please provide a path")
         
-        #optimizer = keras.optimizers.Adam(self.lr)
         q_aligner_optimizer = keras.optimizers.Adam(self.lr)
         q_encoder_optimizer = keras.optimizers.Adam(self.lr)
         start_pred_optimizer = keras.optimizers.Adam(self.lr)
@@ -210,8 +385,3 @@ class Aligner(object):
                                     q_encoder=self.q_encoder,
                                     start_pred=self.start_pred,
                                     end_pred=self.end_pred)
-        # return tf.train.Checkpoint(optimizer=optimizer,
-        #                             q_aligner=self.q_aligner,
-        #                             q_encoder=self.q_encoder,
-        #                             start_pred=self.start_pred,
-        #                             end_pred=self.end_pred)
