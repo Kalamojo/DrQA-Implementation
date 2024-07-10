@@ -110,7 +110,7 @@ class StartPredictor(Layer):
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
         product = tf.einsum('ijk,lmk->ik', product, q_vector)
         #print("prod:", product.shape)
-        product = K.squeeze(K.argmax(product, axis=0), axis=-1)
+        product = K.squeeze(product, axis=-1)
         #print("prod arg:", product.shape)
         #print("new product shape", product.shape)
         return product
@@ -126,13 +126,14 @@ class EndPredictor(Layer):
         super(EndPredictor, self).build(input_shape)
     
     def call(self, x):
+        #print("weight", self.W)
         p_matrix, q_vector = x
         #print("input shapes:", p_matrix.shape, q_vector.shape)
         product = K.dot(p_matrix, self.W)
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
         product = tf.einsum('ijk,lmk->ik', product, q_vector)
-        product = K.squeeze(K.argmax(product, axis=0), axis=-1) + 1
+        product = K.squeeze(product, axis=-1)
         #print("new product shape", product.shape)
         return product
 
@@ -146,7 +147,61 @@ class Aligner(object):
         self.start_pred = self.create_start_predictor()
         self.end_pred = self.create_end_predictor()
         self.lr = lr
+        self.start_variable = tf.Variable(tf.zeros([], dtype=tf.int64))
+        self.end_variable = tf.Variable(tf.zeros([], dtype=tf.int64))
 
+    @tf.function
+    def train_step3(self):
+        with tf.GradientTape() as tape:
+            x = tf.constant([4], dtype=tf.float32)
+            tape.watch(x)
+            loss = x**2
+        print(tape.gradient(loss, x))
+
+    @tf.function
+    def train_step2(self, paragraph_vectors: np.ndarray, query_vector: np.ndarray, answer_spans: list[tuple[int, int]], optimizer, train: bool = True):
+        # q_embed = tf.convert_to_tensor(query_vector)
+        # p_embed = tf.convert_to_tensor(paragraph_vectors)
+        #aspan = tf.convert_to_tensor(answer_spans, dtype=tf.int64)
+        #with tf.GradientTape() as sp_tape, tf.GradientTape() as ep_tape:
+        with tf.GradientTape() as tape:
+            #print("paragraph vec", paragraph_vectors.shape)
+
+            print("start pred")
+            # tape.watch(p_embed)
+            # tape.watch(q_embed)
+            start_matrix = self.start_pred([paragraph_vectors, query_vector], training=train)
+
+            end_matrix = self.end_pred([paragraph_vectors, query_vector], training=train)
+            #self.start_variable.assign(start_matrix)
+            #tape.watch(start_matrix)
+            #print(start_matrix)
+
+            # print("end pred")
+            # ep_tape.watch([p_embed, q_embed])
+            # end_matrix = self.end_pred([p_embed, q_embed], training=train)
+            # if start_matrix <= end_matrix:
+            #     self.end_variable.assign(end_matrix)
+            # else:
+            #     self.end_variable.assign(start_matrix)
+            # print(end_matrix)
+
+            # self.end_variable.assign(start_matrix+1)
+            # tape.watch(self.end_variable)
+
+            print("stuff")
+            #print(answer_spans)
+            #print(start_matrix)
+            # loss = self.calculate_loss2(self.start_variable, self.end_variable, aspan[0][0], aspan[0][1])
+            loss = tf.reduce_mean((start_matrix + end_matrix)**2)
+        #print("loss:", loss)
+
+        print("grad stuff")
+        #print([p_embed, q_embed])
+        variables = self.start_pred.trainable_variables + self.end_pred.trainable_variables
+        print(tape.gradient(loss, variables))
+        return loss
+    
     @tf.function
     def train_step(self, query_embedding: np.ndarray, paragraph_embeddings: np.ndarray, feature_matrix: np.ndarray, answer_spans: list[tuple[int, int]], optimizer, train: bool = True):
         # q_aligner_optimizer = keras.optimizers.Adam(self.lr)
@@ -177,32 +232,39 @@ class Aligner(object):
         #     loss = self.calculate_loss(prediction, tf.range(answer_spans[0][0], answer_spans[0][1]+1, dtype=tf.int64))
 
 
-        q_embed = tf.Variable(tf.zeros_like(query_embedding))
-        p_embed = tf.Variable(tf.zeros_like(paragraph_embeddings))
-        f_matrix = tf.Variable(tf.zeros_like(feature_matrix))
-        answer_start = tf.Variable(tf.zeros_like(answer_spans[0][0], dtype=tf.int64))
-        answer_end = tf.Variable(tf.zeros_like(answer_spans[0][1], dtype=tf.int64))
+        # q_embed = tf.Variable(tf.zeros_like(query_embedding))
+        # p_embed = tf.Variable(tf.zeros_like(paragraph_embeddings))
+        # f_matrix = tf.Variable(tf.zeros_like(feature_matrix))
+        # answer_start = tf.Variable(tf.zeros_like(answer_spans[0][0], dtype=tf.int64))
+        # answer_end = tf.Variable(tf.zeros_like(answer_spans[0][1], dtype=tf.int64))
+        q_embed = tf.convert_to_tensor(query_embedding)
+        p_embed = tf.convert_to_tensor(paragraph_embeddings)
+        f_matrix = tf.convert_to_tensor(feature_matrix)
+        # answer_start = tf.Variable(tf.zeros_like(answer_spans[0][0], dtype=tf.int64))
+        # answer_end = tf.Variable(tf.zeros_like(answer_spans[0][1], dtype=tf.int64))
         #with tf.GradientTape() as qa_tape, tf.GradientTape() as qe_tape, tf.GradientTape() as sp_tape, tf.GradientTape() as ep_tape:
-        with tf.GradientTape() as tape:
-            tape.watch(q_embed)
-            tape.watch(p_embed)
-            tape.watch(f_matrix)
-            tape.watch(answer_start)
-            tape.watch(answer_end)
-            q_embed.assign(query_embedding)
-            print(query_embedding.shape, query_embedding.dtype)
+        with tf.GradientTape(persistent=True) as tape:
+            # tape.watch(q_embed)
+            # tape.watch(p_embed)
+            # tape.watch(f_matrix)
+            # tape.watch(answer_start)
+            # tape.watch(answer_end)
+            # q_embed.assign(query_embedding)
+            #print(query_embedding.shape, query_embedding.dtype)
             print(q_embed)
             #qe_tape.watch(query_embedding)
             
             query_vector = self.q_encoder(q_embed, training=train)
             
-            p_embed.assign(paragraph_embeddings)
+            # p_embed.assign(paragraph_embeddings)
             #qa_tape.watch([query_embedding, paragraph_embeddings])
-            aligned_paragraph_matrix = self.q_aligner([p_embed, paragraph_embeddings], training=train)
+            aligned_paragraph_matrix = self.q_aligner([q_embed, p_embed], training=train)
             
-            f_matrix.assign(feature_matrix)
+            # f_matrix.assign(feature_matrix)
             paragraph_vectors = tf.concat([aligned_paragraph_matrix, p_embed, f_matrix], axis=1)
             print("paragraph vec", paragraph_vectors.shape)
+
+            print("query vec:", query_vector.shape)
 
             print("start pred")
             #sp_tape.watch([paragraph_vectors, query_vector])
@@ -215,6 +277,10 @@ class Aligner(object):
             print("end pred")
             #ep_tape.watch([paragraph_vectors, query_vector])
             end_matrix = self.end_pred([paragraph_vectors, query_vector], training=train)
+            if start_matrix <= end_matrix:
+                self.end_variable.assign(end_matrix)
+            else:
+                self.end_variable.assign(start_matrix)
             print(end_matrix)
             # print(end_matrix)
             # print(end_matrix.shape)
@@ -236,15 +302,15 @@ class Aligner(object):
             #     print(sess.run(prediction))
 
             #answers = tf.Variable(tf.cast(tf.range(answer_spans[0][0], answer_spans[0][1]+1), dtype=tf.float32))
-            answer_start.assign(answer_spans[0][0])
-            answer_end.assign(answer_spans[0][1])
+            # answer_start.assign(answer_spans[0][0])
+            # answer_end.assign(answer_spans[0][1])
             #tape.watch(prediction)
             #tape.watch(answers)
             print("stuff")
-            print(answer_start)
+            print(answer_spans)
             print(start_matrix)
-            #loss = self.calculate_loss(start_matrix, end_matrix, answer_start, answer_end)
-            loss = answer_start * 4
+            loss = self.calculate_loss(start_matrix, self.end_variable, answer_spans[0][0], answer_spans[0][1])
+            #loss = answer_start * 4
             # for i in range(1, len(answer_spans)):
             #     print("ans span:", answer_spans[i])
             #     #loss = tf.reduce_min(tf.stack([loss, self.calculate_loss(prediction, tf.constant(answer_spans[i], dtype=tf.int64))]))
@@ -253,22 +319,23 @@ class Aligner(object):
             #loss = tf.reshape(loss, [1, 1])
         print("loss:", loss)
         
-        # variables = self.q_aligner.trainable_variables + self.q_encoder.trainable_variables + self.start_pred.trainable_variables + self.end_pred.trainable_variables
-        # gradients = tape.gradient(loss, variables)
+        variables = self.q_aligner.trainable_variables + self.q_encoder.trainable_variables + self.start_pred.trainable_variables + self.end_pred.trainable_variables
+        #gradients = tape.gradient(loss, variables)
         # gradients_of_q_aligner = qa_tape.gradient(loss, self.q_aligner.trainable_variables)
         # gradients_of_q_encoder = qe_tape.gradient(loss, self.q_encoder.trainable_variables)
         # gradients_of_start_pred = sp_tape.gradient(loss, self.start_pred.trainable_variables)
         # gradients_of_end_pred = ep_tape.gradient(loss, self.end_pred.trainable_variables)
 
         print("grad stuff")
-        print(tape.gradient(loss, answer_start))
-        # print(gradients)
+        print(self.start_pred.trainable_weights)
+        print(tape.gradient(loss, self.start_pred.trainable_weights))
+        print(tape.gradient(loss, variables))
         # print(variables)
         # print(gradients_of_q_aligner)
         # print(self.q_aligner.trainable_variables)
         # print(gradients_of_q_encoder, gradients_of_start_pred, gradients_of_end_pred)
 
-        # optimizer.apply_gradients(zip(gradients, variables))
+        #optimizer.apply_gradients(zip(gradients, variables))
         # q_aligner_optimizer.apply_gradients(zip(gradients_of_q_aligner, self.q_aligner.trainable_variables))
         # q_encoder_optimizer.apply_gradients(zip(gradients_of_q_encoder, self.q_encoder.trainable_variables))
         # start_pred_optimizer.apply_gradients(zip(gradients_of_start_pred, self.start_pred.trainable_variables))
@@ -276,13 +343,24 @@ class Aligner(object):
         return loss
 
     def calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: tf.Tensor, answer_end: tf.Tensor, smooth: float = 1.) -> tf.Tensor:
-        pred = tf.cast(tf.range(pred_start, pred_end), tf.float32)
+        pred = tf.cast(tf.expand_dims(tf.range(pred_start, pred_end), axis=-1), tf.float32)
         answer = tf.cast(tf.range(answer_start, answer_end), tf.float32)
         intersection = K.sum(K.abs(answer * pred), axis=-1)
         sum_ = K.sum(K.abs(answer) + K.abs(pred), axis=-1)
         jac = (intersection + smooth) / (sum_ - intersection + smooth)
         return (1 - jac) * smooth
-
+    
+    def calculate_loss2(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: tf.Tensor, answer_end: tf.Tensor, smooth: float = 1.) -> tf.Tensor:
+        inter = tf.cast(tf.reduce_min(tf.stack([pred_end, answer_end])) - tf.reduce_max(tf.stack([pred_start, answer_start])), dtype=tf.float32)
+        union = tf.cast(tf.reduce_max(tf.stack([pred_end, answer_end])) - tf.reduce_min(tf.stack([pred_start, answer_start])), dtype=tf.float32)
+        return 1 - ((tf.reduce_max(tf.stack([inter, 0])) + smooth) / (union + tf.reduce_min(tf.stack([inter, 0])) + smooth))
+        # pred = tf.cast(tf.expand_dims(tf.range(pred_start, pred_end), axis=0), tf.float32)
+        # answer = tf.cast(tf.expand_dims(tf.range(answer_start, answer_end), axis=0), tf.float32)
+        # intersection = K.sum(K.abs(answer * pred), axis=-1)
+        # sum_ = K.sum(K.abs(answer) + K.abs(pred), axis=-1)
+        # jac = (intersection + smooth) / (sum_ - intersection + smooth)
+        # return intersection, sum_
+    
         # smooth = 1.
         # y_true_f = K.cast(K.flatten(answer), tf.float32)
         # y_pred_f = K.cast(K.flatten(pred), tf.float32)
@@ -356,16 +434,16 @@ class Aligner(object):
         x_q = Input(shape=(self.embed_dim, 1))
         start_predictor = StartPredictor()([x_p, x_q])
         model = Model([x_p, x_q], start_predictor, name="Start_Predictor")
-        #print("output shape:", model.output_shape)
-        assert model.output_shape == ()
+        print("output shape:", model.output_shape)
+        assert model.output_shape == (None,)
         return model
     
     def create_end_predictor(self) -> Model:
         x_p = Input(shape=(self.embed_dim * 2 + self.feature_dim, 1))
         x_q = Input(shape=(self.embed_dim, 1))
-        start_predictor = EndPredictor()([x_p, x_q])
-        model = Model([x_p, x_q], start_predictor, name="End_Predictor")
-        assert model.output_shape == ()
+        end_predictor = EndPredictor()([x_p, x_q])
+        model = Model([x_p, x_q], end_predictor, name="End_Predictor")
+        assert model.output_shape == (None,)
         return model
     
     def load_checkpoint(self, checkpoint_dir: str) -> tf.train.Checkpoint:

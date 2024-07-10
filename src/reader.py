@@ -119,6 +119,18 @@ class Reader(object):
         self.aligner = Aligner(self.embedder.dimensions, self.feature_dim)
         self.train = False
 
+    def test_train(self):
+        self.aligner.start_pred.summary()
+        self.aligner.end_pred.summary()
+
+        optimizer = tf.keras.optimizers.Adam(0.001)
+        paragraph_vectors = np.random.rand(32619, 606, 1).astype(np.float32)
+        query_vector = np.random.rand(1, 300, 1).astype(np.float32)
+        answer_spans = [(30, 41)]
+
+        self.aligner.train_step2(paragraph_vectors, query_vector, answer_spans, optimizer, train=True)
+        # self.aligner.train_step3()
+
     def train_reader(self, doc_retriever: Retriever, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], num_docs = 5, num_questions: int = 100):
         questions_list = [TreebankWordTokenizer().tokenize(question[0]) for question in questions]
         max_words = max(len(q_list) for q_list in questions_list)
@@ -126,6 +138,8 @@ class Reader(object):
         self.aligner.q_aligner.summary()
         self.aligner.start_pred.summary()
         self.aligner.end_pred.summary()
+
+        optimizer = tf.keras.optimizers.Adam(0.001)
         
         for i in range(len(questions)):
             correct_doc = documents[questions[i][1]]
@@ -189,7 +203,7 @@ class Reader(object):
             print(p_embeddings_shaped.shape)
 
 
-            optimizer = tf.keras.optimizers.Adam(0.001)
+            #optimizer = tf.keras.optimizers.Adam(0.001)
             self.aligner.train_step(query_embedding, p_embeddings_shaped, matrix_arr, answer_spans, optimizer, train=True)
 
             # aligned_matrix = self.aligner.q_aligner([query_embedding, p_embeddings_shaped], training=self.train)
