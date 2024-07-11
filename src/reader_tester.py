@@ -23,8 +23,8 @@ def main():
     #fineTune(doc_reader, doc_retriever)
 
     pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
-    #doc_reader.train_reader(doc_retriever, pages, questions, answers)
-    doc_reader.test_train()
+    doc_reader.train_reader(doc_retriever, pages, questions, answers)
+    #doc_reader.test_train()
 
     # aligner = Aligner(embed_dim=300)
     # aligner.q_encoder.summary()
