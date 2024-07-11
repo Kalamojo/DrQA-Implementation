@@ -53,8 +53,8 @@ class Retriever(object):
         self.supported_squads = ['1.1', 'v2.0']
         self.metric_options = ['dot', 'cosine']
     
-    def train_squad(self, squad_path: str, vectorizer_save: str = None, matrix_save: str = None) -> None:
-        with open(squad_path, "r") as f:
+    def train_squad(self, squad_path: str, vectorizer_save: str | None = None, matrix_save: str | None = None) -> None:
+        with open(squad_path, "r", encoding='utf-8') as f:
             squad = json.load(f)
         
         version = squad.get('version', None)
@@ -73,7 +73,7 @@ class Retriever(object):
             warnings.warn("Vectorizer and Matrix were not saved because paths were not supplied")
 
     def get_squad_docs(self, query: str, squad_path: str, num_docs: int = 5) -> list[str]:
-        with open(squad_path, "r") as f:
+        with open(squad_path, "r", encoding='utf-8') as f:
             squad = json.load(f)
         
         version = squad.get('version', None)
@@ -90,7 +90,7 @@ class Retriever(object):
         return page
     
     def get_squad_qas(self, squad_path: str) -> tuple[list[str], list[tuple[str, int]], list[tuple[int, int]]]:
-        with open(squad_path, "r") as f:
+        with open(squad_path, "r", encoding='utf-8') as f:
             squad = json.load(f)
         
         version = squad.get('version', None)
@@ -125,7 +125,7 @@ class Retriever(object):
         return scores[0][:num_docs]
 
     def get_squad_accuracy(self, squad_path: str, num_docs: int = 5) -> int:
-        with open(squad_path, "r") as f:
+        with open(squad_path, "r", encoding='utf-8') as f:
             squad = json.load(f)
         
         version = squad.get('version', None)

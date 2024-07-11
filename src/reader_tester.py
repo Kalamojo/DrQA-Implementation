@@ -22,9 +22,15 @@ def main():
     # #doc_reader.embedder.save_embedder("vocab_v1.vocab", "embeddings_v1.npy")
     #fineTune(doc_reader, doc_retriever)
 
-    pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
-    doc_reader.train_reader(doc_retriever, pages, questions, answers)
-    #doc_reader.test_train()
+    query = "Who discovered Bayesian Optimization?"
+    docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
+    doc_reader.test_reader(docs, query, checkpoint_dir="models")
+
+    #ho sang a version of Queen's Somebody to Love in 2004's Ella Enchanted?
+
+    # pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
+    # doc_reader.train_reader(doc_retriever, pages, questions, answers, checkpoint_dir="models")
+    # #doc_reader.test_train()
 
     # aligner = Aligner(embed_dim=300)
     # aligner.q_encoder.summary()

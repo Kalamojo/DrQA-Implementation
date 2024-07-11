@@ -1,7 +1,10 @@
 __pycache__/
 .venv/
+
 glove*.txt
 *.npz
 *.npy
 *.pkl
 *.vocab
+
+models/

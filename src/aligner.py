@@ -138,7 +138,7 @@ class EndPredictor(Layer):
         return product
 
 class Aligner(object):
-    def __init__(self, embed_dim: int, feature_dim: int, lr: float = 0.001) -> None:
+    def __init__(self, embed_dim: int, feature_dim: int, lr: float = 0.01) -> None:
         super(Aligner, self).__init__()
         self.embed_dim = embed_dim
         self.feature_dim = feature_dim
@@ -146,18 +146,39 @@ class Aligner(object):
         self.q_encoder = self.create_question_encoder()
         self.start_pred = self.create_start_predictor()
         self.end_pred = self.create_end_predictor()
-        self.lr = lr
+        self.qa_optimizer = keras.optimizers.Adam(lr)
+        self.qe_optimizer = keras.optimizers.Adam(lr)
+        self.sp_optimizer = keras.optimizers.Adam(lr)
+        self.ep_optimizer = keras.optimizers.Adam(lr)
     
-    @tf.function
-    def train_step(self, query_embedding: np.ndarray, paragraph_embeddings: np.ndarray, feature_matrix: np.ndarray, answer_spans: list[tuple[int, int]], optimizer: keras.optimizers.Optimizer, train: bool = True):
+    @tf.function(input_signature=[tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32),
+                                  tf.TensorSpec(shape=[None, 6, 1], dtype=tf.float32)])
+    def predict(self, query_embedding: tf.Tensor, paragraph_embeddings: tf.Tensor, feature_matrix: tf.Tensor) -> tf.Tensor:
         #with tf.GradientTape() as qa_tape, tf.GradientTape() as qe_tape, tf.GradientTape() as sp_tape, tf.GradientTape() as ep_tape:
-        with tf.GradientTape() as tape:
-            query_vector = self.q_encoder(query_embedding, training=train)
-            aligned_paragraph_matrix = self.q_aligner([query_embedding, paragraph_embeddings], training=train)
+        query_vector = self.q_encoder(query_embedding, training=True)
+        aligned_paragraph_matrix = self.q_aligner([query_embedding, paragraph_embeddings], training=False)
+        paragraph_vectors = tf.concat([aligned_paragraph_matrix, paragraph_embeddings, feature_matrix], axis=1)
+
+        start_matrix = self.start_pred([paragraph_vectors, query_vector], training=True)
+        end_matrix = self.end_pred([paragraph_vectors, query_vector], training=True)
+        #print(start_matrix)
+        start_ind = self._softargmax(start_matrix)
+        end_ind = self._softargmax(end_matrix)
+
+        return start_ind, end_ind
+
+    @tf.function(input_signature=[tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32),
+                                  tf.TensorSpec(shape=[None, 6, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 2], dtype=tf.float32)])
+    def train_step(self, query_embedding: tf.Tensor, paragraph_embeddings: tf.Tensor, feature_matrix: tf.Tensor, answer_spans: tf.Tensor) -> tf.Tensor:
+        with tf.GradientTape() as qe_tape, tf.GradientTape() as qa_tape, tf.GradientTape() as sp_tape, tf.GradientTape() as ep_tape:
+        #with tf.GradientTape() as tape:
+            query_vector = self.q_encoder(query_embedding, training=True)
+            aligned_paragraph_matrix = self.q_aligner([query_embedding, paragraph_embeddings], training=True)
             paragraph_vectors = tf.concat([aligned_paragraph_matrix, paragraph_embeddings, feature_matrix], axis=1)
 
-            start_matrix = self.start_pred([paragraph_vectors, query_vector], training=train)
-            end_matrix = self.end_pred([paragraph_vectors, query_vector], training=train)
+            start_matrix = self.start_pred([paragraph_vectors, query_vector], training=True)
+            end_matrix = self.end_pred([paragraph_vectors, query_vector], training=True)
+            #print(start_matrix)
             start_ind = self._softargmax(start_matrix)
             end_ind = self._softargmax(end_matrix)
 
@@ -166,23 +187,33 @@ class Aligner(object):
                 loss = tf.reduce_min(tf.stack([loss, self._calculate_loss(start_ind, end_ind, answer_spans[i][0], answer_spans[i][1])]))
         #print("loss:", loss)
         
-        variables = self.q_aligner.trainable_variables + self.q_encoder.trainable_variables + self.start_pred.trainable_variables + self.end_pred.trainable_variables
-        gradients = tape.gradient(loss, variables)
-        optimizer.apply_gradients(zip(gradients, variables))
+        #variables = self.q_aligner.trainable_variables + self.q_encoder.trainable_variables + self.start_pred.trainable_variables + self.end_pred.trainable_variables
+        qa_gradients = qa_tape.gradient(loss, self.q_aligner.trainable_variables)
+        qe_gradients = qe_tape.gradient(loss, self.q_encoder.trainable_variables)
+        sp_gradients = sp_tape.gradient(loss, self.start_pred.trainable_variables)
+        ep_gradients = ep_tape.gradient(loss, self.end_pred.trainable_variables)
+        
+        self.qa_optimizer.apply_gradients(zip(qa_gradients, self.q_aligner.trainable_variables))
+        self.qe_optimizer.apply_gradients(zip(qe_gradients, self.q_encoder.trainable_variables))
+        self.sp_optimizer.apply_gradients(zip(sp_gradients, self.start_pred.trainable_variables))
+        self.ep_optimizer.apply_gradients(zip(ep_gradients, self.end_pred.trainable_variables))
 
         return loss
     
-    def _softargmax(self, x, beta=1e10):
+    def _softargmax(self, x, beta=1e10) -> tf.Tensor:
         x = tf.convert_to_tensor(x)
-        x_range = tf.range(x.shape[-1], dtype=x.dtype)
+        # print(x.shape)
+        # print(tf.shape(x)[-1])
+        # print(x.dtype)
+        x_range = tf.range(tf.shape(x)[-1], dtype=x.dtype)
         return tf.reduce_sum(tf.nn.softmax(x*beta) * x_range, axis=-1)
     
-    def _calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: int, answer_end: int, smooth: float = 1.) -> tf.Tensor:
+    def _calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: int, answer_end: int) -> tf.Tensor:
         inter = tf.reduce_min(tf.stack([pred_end, answer_end])) - tf.reduce_max(tf.stack([pred_start, answer_start]))
         union = tf.reduce_max(tf.stack([pred_end, answer_end])) - tf.reduce_min(tf.stack([pred_start, answer_start]))
         return tf.cond(tf.greater(pred_start, pred_end)
                 , lambda: 2.0
-                , lambda: 1 - ((tf.reduce_max(tf.stack([inter, 0])) + smooth) / (union + tf.reduce_min(tf.stack([inter, 0])) + smooth)))
+                , lambda: 1 - (tf.reduce_max(tf.stack([inter, 0])) / (union + tf.reduce_min(tf.stack([inter, 0])))))
 
     def create_question_aligner(self) -> Model:
         x_q = Input(shape=(self.embed_dim, 1))
@@ -222,17 +253,15 @@ class Aligner(object):
         assert model.output_shape == (None,)
         return model
     
-    def load_checkpoint(self, checkpoint_dir: str) -> tf.train.Checkpoint:        
-        q_aligner_optimizer = keras.optimizers.Adam(self.lr)
-        q_encoder_optimizer = keras.optimizers.Adam(self.lr)
-        start_pred_optimizer = keras.optimizers.Adam(self.lr)
-        end_pred_optimizer = keras.optimizers.Adam(self.lr)
+    def restore_checkpoint(self, checkpoint_dir: str) -> None:
+        self.checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir)).assert_consumed()
+
+    def save_checkpoint(self) -> None:
+        self.checkpoint.save(file_prefix=self.checkpoint_prefix)
+    
+    def load_checkpoint(self, checkpoint_dir: str) -> None:
         self.checkpoint_prefix = os.path.join(checkpoint_dir, 'ckpt')
-        return tf.train.Checkpoint(q_aligner_optimizer=q_aligner_optimizer,
-                                    q_encoder_optimizer=q_encoder_optimizer,
-                                    start_pred_optimizer=start_pred_optimizer,
-                                    end_pred_optimizer=end_pred_optimizer,
-                                    q_aligner=self.q_aligner,
+        self.checkpoint = tf.train.Checkpoint(q_aligner=self.q_aligner,
                                     q_encoder=self.q_encoder,
                                     start_pred=self.start_pred,
                                     end_pred=self.end_pred)
