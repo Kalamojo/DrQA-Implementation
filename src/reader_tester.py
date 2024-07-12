@@ -22,11 +22,13 @@ def main():
     # #doc_reader.embedder.save_embedder("vocab_v1.vocab", "embeddings_v1.npy")
     #fineTune(doc_reader, doc_retriever)
 
-    query = "Who discovered Bayesian Optimization?"
+    query = "Who was the first Apostle of Jesus?"
     docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
     doc_reader.test_reader(docs, query, checkpoint_dir="models")
 
     #ho sang a version of Queen's Somebody to Love in 2004's Ella Enchanted?
+    #("What year did the government of Zhejiang recognise folk religion as 'civil religion'?", 97)
+    #During which centuries did ROme fall under the influence of Byzantine art?
 
     # pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
     # doc_reader.train_reader(doc_retriever, pages, questions, answers, checkpoint_dir="models")

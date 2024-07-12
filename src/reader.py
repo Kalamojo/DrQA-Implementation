@@ -17,7 +17,8 @@ import time
 from joblib import Parallel, delayed
 import tensorflow as tf
 tf.compat.v1.enable_eager_execution()
-# tf.compat.v1.disable_v2_behavior()
+physical_devices = tf.config.list_physical_devices('GPU')
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 class Embedder(object):
     def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None) -> None:
@@ -149,8 +150,8 @@ class Reader(object):
         p_embeddings_shaped = tf.convert_to_tensor(p_embeddings.reshape((p_embeddings.shape[0], p_embeddings.shape[1], 1)))
 
         start, end = self.aligner.predict(query_embedding, p_embeddings_shaped, matrix_arr)
+        print(' '.join(all_words[int(start):int(end)]))
         print(start, end)
-        print(all_words[int(start):int(end)+1])
 
     def train_reader(self, doc_retriever: Retriever, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], 
                      num_docs = 5, num_questions: int = 100, checkpoint_dir: str = None) -> None:
@@ -237,12 +238,12 @@ class Reader(object):
             print("loss:", loss)
             print("--")
 
-            # if (ind + 1) % int(num_questions / 5) == 0:
-            #     print("saving.....")
-            #     checkpoint.save(file_prefix=self.aligner.checkpoint_prefix)
-            print("saving.....")
+            if (ind + 1) % int(num_questions / 5) == 0:
+                print("saving.....")
+                self.aligner.save_checkpoint()
+            #print("saving.....")
 
-            self.aligner.save_checkpoint()
+            #self.aligner.save_checkpoint()
 
             print("-----")
             ind += 1

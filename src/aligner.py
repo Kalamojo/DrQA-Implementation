@@ -1,8 +1,9 @@
 import tensorflow as tf
-from tensorflow import keras
-from keras import Input, Model
-from keras.layers import Layer, SimpleRNN
-import keras.backend as K
+import keras
+from keras import Input, Model, layers, Layer
+#from keras.layers import Layer, SimpleRNN
+from keras import ops as K
+#import keras.backend as K
 import numpy as np
 import os
 
@@ -30,21 +31,23 @@ class AlignmentLayer(Layer):
         weighted_q = K.dot(embed_q, self.W)
         # print(weighted_q.shape)
         weighted_q = weighted_q + self.b
-        # print("or worse stuff?")
+        # print("weighted shapes")
         # print(weighted_p.shape, weighted_q.shape)
         # print("hmmm, actually did it")
+        tf.matmul
         # Alignment scores
         #print(K.permute_dimensions(weighted_q, (1, 0)).shape)
         #scores = K.dot(weighted_q, K.permute_dimensions(weighted_p, (0, 2, 1)))
-        scores = tf.einsum('ijk,ljk->lij', weighted_q, weighted_p)
-        # print("cuh scores", scores.shape)
+        scores = tf.einsum('ijk,ljk->lj', weighted_q, weighted_p)
+        #print("cuh scores", scores.shape)
         #print("cuh")
-        scores = K.sum(scores, axis=1)
-        # print("scores", scores.shape)
+        #scores = K.sum(scores, axis=1)
+        #print("scores", scores.shape)
         # Compute the weights
         alpha = K.softmax(scores)
         alpha = K.expand_dims(alpha, axis=-1)
         # print("alpha.shape", alpha.shape)
+        # print("embed shape", embed_q.shape)
         #context = embed_q * alpha
         context = tf.einsum('ijk,ljk->ljk', embed_q, alpha)
         # print("context", context.shape)
@@ -108,9 +111,9 @@ class StartPredictor(Layer):
         product = K.dot(p_matrix, self.W)
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
-        product = tf.einsum('ijk,lmk->ik', product, q_vector)
+        product = tf.einsum('ijk,lmk->i', product, q_vector)
         #print("prod:", product.shape)
-        product = K.squeeze(product, axis=-1)
+        #product = K.squeeze(product, axis=-1)
         #print("prod arg:", product.shape)
         #print("new product shape", product.shape)
         return product
@@ -132,8 +135,8 @@ class EndPredictor(Layer):
         product = K.dot(p_matrix, self.W)
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
-        product = tf.einsum('ijk,lmk->ik', product, q_vector)
-        product = K.squeeze(product, axis=-1)
+        product = tf.einsum('ijk,lmk->i', product, q_vector)
+        #product = K.squeeze(product, axis=-1)
         #print("new product shape", product.shape)
         return product
 
@@ -163,9 +166,9 @@ class Aligner(object):
         end_matrix = self.end_pred([paragraph_vectors, query_vector], training=True)
         #print(start_matrix)
         start_ind = self._softargmax(start_matrix)
-        end_ind = self._softargmax(end_matrix)
+        end_ind = self._softargmax(end_matrix, offset=tf.cast(start_ind, tf.int32))
 
-        return start_ind, end_ind
+        return start_ind, end_ind+1
 
     @tf.function(input_signature=[tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32),
                                   tf.TensorSpec(shape=[None, 6, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 2], dtype=tf.float32)])
@@ -180,7 +183,7 @@ class Aligner(object):
             end_matrix = self.end_pred([paragraph_vectors, query_vector], training=True)
             #print(start_matrix)
             start_ind = self._softargmax(start_matrix)
-            end_ind = self._softargmax(end_matrix)
+            end_ind = self._softargmax(end_matrix, offset=tf.cast(start_ind, tf.int32))+1
 
             loss = self._calculate_loss(start_ind, end_ind, answer_spans[0][0], answer_spans[0][1])
             for i in range(1, len(answer_spans)):
@@ -200,34 +203,36 @@ class Aligner(object):
 
         return loss
     
-    def _softargmax(self, x, beta=1e10) -> tf.Tensor:
+    def _softargmax(self, x, offset=0, beta=1e10) -> tf.Tensor:
         x = tf.convert_to_tensor(x)
         # print(x.shape)
         # print(tf.shape(x)[-1])
         # print(x.dtype)
-        x_range = tf.range(tf.shape(x)[-1], dtype=x.dtype)
-        return tf.reduce_sum(tf.nn.softmax(x*beta) * x_range, axis=-1)
+        x_range = tf.range(offset, tf.shape(x)[-1], dtype=x.dtype)
+        return tf.reduce_sum(tf.nn.softmax(x[offset:]*beta) * x_range, axis=-1)
     
-    def _calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: int, answer_end: int) -> tf.Tensor:
+    def _calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: int, answer_end: int, smooth: float = 100.) -> tf.Tensor:
         inter = tf.reduce_min(tf.stack([pred_end, answer_end])) - tf.reduce_max(tf.stack([pred_start, answer_start]))
         union = tf.reduce_max(tf.stack([pred_end, answer_end])) - tf.reduce_min(tf.stack([pred_start, answer_start]))
-        return tf.cond(tf.greater(pred_start, pred_end)
-                , lambda: 2.0
-                , lambda: 1 - (tf.reduce_max(tf.stack([inter, 0])) / (union + tf.reduce_min(tf.stack([inter, 0])))))
+        return (1 - ((tf.reduce_max(tf.stack([inter, 0])) + smooth) / (union + tf.reduce_min(tf.stack([inter, 0])) + smooth))) * smooth
+        # return tf.cond(tf.greater(pred_start, pred_end)
+        #         , lambda: 2.0 * smooth
+        #         , lambda: (1 - ((tf.reduce_max(tf.stack([inter, 0])) + smooth) / (union + tf.reduce_min(tf.stack([inter, 0])) + smooth))) * smooth)
+
 
     def create_question_aligner(self) -> Model:
         x_q = Input(shape=(self.embed_dim, 1))
         x_p = Input(shape=(self.embed_dim, 1))
         alignment_layer = AlignmentLayer()([x_q, x_p])
         model = Model([x_q, x_p], alignment_layer, name="Question_Aligner")
-        #print("expected", (1, input_shape[0][0]))
+        # print("expected", (None, self.embed_dim, 1))
         # print("actual", model.output_shape)
         assert model.output_shape == (None, self.embed_dim, 1)
         return model
 
     def create_question_encoder(self, hidden_units: int = 20, activation: str = "tanh") -> Model:
         x = Input(shape=(self.embed_dim, 1))
-        RNN_layer = SimpleRNN(hidden_units, return_sequences=True, activation=activation)(x)
+        RNN_layer = layers.SimpleRNN(hidden_units, return_sequences=True, activation=activation)(x)
         attention_layer = Attention()(RNN_layer)
         model = Model(x, attention_layer, name="Question_Encoder")
         # print("input", input_shape)
