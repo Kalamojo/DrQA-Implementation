@@ -16,7 +16,7 @@ class Vectorizer(TfidfVectorizer):
         self.bigram = bigram
         self.vectorizer_path = vectorizer_path
         self.__load_vectorizer()
-        self.stop_words = set(stopwords.words('english'))
+        self.stop_words = word_tokenize(' '.join(stopwords.words('english')))
 
     def __tokenizer(self, text: str) -> list[str]:
         word_tokens = word_tokenize(text)

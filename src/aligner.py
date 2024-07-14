@@ -112,6 +112,7 @@ class StartPredictor(Layer):
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
         product = tf.einsum('ijk,lmk->i', product, q_vector)
+        product = (product - tf.reduce_min(product)) / (tf.reduce_max(product) - tf.reduce_min(product))
         #print("prod:", product.shape)
         #product = K.squeeze(product, axis=-1)
         #print("prod arg:", product.shape)
@@ -136,12 +137,13 @@ class EndPredictor(Layer):
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
         product = tf.einsum('ijk,lmk->i', product, q_vector)
+        product = (product - tf.reduce_min(product)) / (tf.reduce_max(product) - tf.reduce_min(product))
         #product = K.squeeze(product, axis=-1)
         #print("new product shape", product.shape)
         return product
 
 class Aligner(object):
-    def __init__(self, embed_dim: int, feature_dim: int, lr: float = 0.01) -> None:
+    def __init__(self, embed_dim: int, feature_dim: int, lr: float = 0.002) -> None:
         super(Aligner, self).__init__()
         self.embed_dim = embed_dim
         self.feature_dim = feature_dim
@@ -153,22 +155,29 @@ class Aligner(object):
         self.qe_optimizer = keras.optimizers.Adam(lr)
         self.sp_optimizer = keras.optimizers.Adam(lr)
         self.ep_optimizer = keras.optimizers.Adam(lr)
+        self.span_limit = 30
     
     @tf.function(input_signature=[tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32),
                                   tf.TensorSpec(shape=[None, 6, 1], dtype=tf.float32)])
     def predict(self, query_embedding: tf.Tensor, paragraph_embeddings: tf.Tensor, feature_matrix: tf.Tensor) -> tf.Tensor:
         #with tf.GradientTape() as qa_tape, tf.GradientTape() as qe_tape, tf.GradientTape() as sp_tape, tf.GradientTape() as ep_tape:
-        query_vector = self.q_encoder(query_embedding, training=True)
+        query_vector = self.q_encoder(query_embedding, training=False)
         aligned_paragraph_matrix = self.q_aligner([query_embedding, paragraph_embeddings], training=False)
         paragraph_vectors = tf.concat([aligned_paragraph_matrix, paragraph_embeddings, feature_matrix], axis=1)
 
-        start_matrix = self.start_pred([paragraph_vectors, query_vector], training=True)
-        end_matrix = self.end_pred([paragraph_vectors, query_vector], training=True)
+        start_matrix = self.start_pred([paragraph_vectors, query_vector], training=False)
+        end_matrix = self.end_pred([paragraph_vectors, query_vector], training=False)
         #print(start_matrix)
-        start_ind = self._softargmax(start_matrix)
-        end_ind = self._softargmax(end_matrix, offset=tf.cast(start_ind, tf.int32))
+        # start_ind = self._softargmax(start_matrix)
+        # end_ind = self._softargmax(end_matrix, offset=tf.cast(start_ind, tf.int32))
+        start_prod = self._prefix_product(start_matrix, end_matrix, tf.cast(True, dtype=tf.bool))
+        end_prod = self._prefix_product(end_matrix, start_matrix, tf.cast(False, dtype=tf.bool))
+        start_ind = self._softargmax(start_prod)
+        end_ind = self._softargmax(end_prod)+1
+        print(start_ind)
+        print(end_ind)
 
-        return start_ind, end_ind+1
+        return start_ind, end_ind, start_prod, end_prod
 
     @tf.function(input_signature=[tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32),
                                   tf.TensorSpec(shape=[None, 6, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 2], dtype=tf.float32)])
@@ -182,12 +191,29 @@ class Aligner(object):
             start_matrix = self.start_pred([paragraph_vectors, query_vector], training=True)
             end_matrix = self.end_pred([paragraph_vectors, query_vector], training=True)
             #print(start_matrix)
-            start_ind = self._softargmax(start_matrix)
-            end_ind = self._softargmax(end_matrix, offset=tf.cast(start_ind, tf.int32))+1
+            # start_ind = self._softargmax(start_matrix)
+            # end_ind = self._softargmax(end_matrix, offset=tf.cast(start_ind, tf.int32))+1
+            #print("end matrix:", end_matrix)
+            start_prod = self._prefix_product(start_matrix, end_matrix, tf.constant(True, dtype=tf.bool))
+            end_prod = self._prefix_product(end_matrix, start_matrix, tf.constant(False, dtype=tf.bool))
+            start_ind = self._softargmax(start_prod)
+            end_ind = self._softargmax(end_prod)+1
+            # print(start_ind)
+            # print(end_ind)
+            # print(prod_arr)
+            # #print(start_max, end_max)
+            # end_ind = self._softargmax(prod_arr)
+            # print("didf first")
+            # end_offset = tf.shape(end_matrix)[-1]-tf.cast(end_ind, dtype=tf.int32)+1
+            # start_ind = self._softargmax(start_matrix, end_offset=end_offset)
+            # print("did seconds")
+            # start_ind = tf.cast(tf.squeeze(tf.where(tf.equal(start_matrix, start_max))), dtype=tf.float32)
+            # end_ind = tf.cast(tf.squeeze(tf.where(tf.equal(end_matrix, end_max))), dtype=tf.float32)
 
-            loss = self._calculate_loss(start_ind, end_ind, answer_spans[0][0], answer_spans[0][1])
-            for i in range(1, len(answer_spans)):
-                loss = tf.reduce_min(tf.stack([loss, self._calculate_loss(start_ind, end_ind, answer_spans[i][0], answer_spans[i][1])]))
+            # loss = self._calculate_loss(start_ind, end_ind, answer_spans[0][0], answer_spans[0][1])
+            # for i in range(1, len(answer_spans)):
+            #     loss = tf.reduce_min(tf.stack([loss, self._calculate_loss(start_ind, end_ind, answer_spans[i][0], answer_spans[i][1])]))
+            loss = tf.reduce_min(tf.map_fn(lambda span: self._calculate_loss(start_ind, end_ind, span[0], span[1], tf.cast(tf.shape(start_matrix)[-1], dtype=tf.float32)), elems=answer_spans))
         #print("loss:", loss)
         
         #variables = self.q_aligner.trainable_variables + self.q_encoder.trainable_variables + self.start_pred.trainable_variables + self.end_pred.trainable_variables
@@ -195,26 +221,53 @@ class Aligner(object):
         qe_gradients = qe_tape.gradient(loss, self.q_encoder.trainable_variables)
         sp_gradients = sp_tape.gradient(loss, self.start_pred.trainable_variables)
         ep_gradients = ep_tape.gradient(loss, self.end_pred.trainable_variables)
+        #print("grads:", qa_gradients, qe_gradients, sp_gradients, ep_gradients)
         
         self.qa_optimizer.apply_gradients(zip(qa_gradients, self.q_aligner.trainable_variables))
         self.qe_optimizer.apply_gradients(zip(qe_gradients, self.q_encoder.trainable_variables))
         self.sp_optimizer.apply_gradients(zip(sp_gradients, self.start_pred.trainable_variables))
         self.ep_optimizer.apply_gradients(zip(ep_gradients, self.end_pred.trainable_variables))
 
-        return loss
+        #print("applied gradients")
+        return loss, start_ind, end_ind
+
+
+
+    def _prefix_product(self, matrix_1: tf.Tensor, matrix_2: tf.Tensor, reverse) -> tf.Tensor:
+        matrix_2_cmax = self._cumulative_max(matrix_2, reverse=reverse)
+        return tf.multiply(matrix_1, matrix_2_cmax)
+    
+    def tf_while_condition(self, x, loop_counter, reverse):
+        return tf.not_equal(loop_counter, self.span_limit - 1)
+
+    def tf_while_body(self, x, loop_counter, reverse):
+        loop_counter += 1
+        y = tf.cond(reverse,
+                   lambda: tf.concat((x[1:], [x[-1]]), axis=0),
+                   lambda: tf.concat(([x[0]], x[:-1]), axis=0))
+        #print(y)
+        new_x = tf.maximum(x, y)
+        return new_x, loop_counter, reverse
+
+    def _cumulative_max(self, matrix: tf.Tensor, reverse: tf.Tensor) -> tf.Tensor:
+        #return tf.scan(lambda a, b: tf.maximum(a, b), matrix, reverse=reverse, initializer=tf.reduce_min(matrix))
+        cumulative_max, _, _ = tf.nest.map_structure(tf.stop_gradient, tf.while_loop(cond=self.tf_while_condition, 
+                                  body=self.tf_while_body, 
+                                  loop_vars=(matrix, 0, reverse)))
+        #print("cumulative max:", cumulative_max)
+        return cumulative_max
+    
+    
     
     def _softargmax(self, x, offset=0, beta=1e10) -> tf.Tensor:
         x = tf.convert_to_tensor(x)
-        # print(x.shape)
-        # print(tf.shape(x)[-1])
-        # print(x.dtype)
         x_range = tf.range(offset, tf.shape(x)[-1], dtype=x.dtype)
         return tf.reduce_sum(tf.nn.softmax(x[offset:]*beta) * x_range, axis=-1)
     
-    def _calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: int, answer_end: int, smooth: float = 100.) -> tf.Tensor:
+    def _calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: int, answer_end: int, size: tf.Tensor, smooth: float = 0.01) -> tf.Tensor:
         inter = tf.reduce_min(tf.stack([pred_end, answer_end])) - tf.reduce_max(tf.stack([pred_start, answer_start]))
         union = tf.reduce_max(tf.stack([pred_end, answer_end])) - tf.reduce_min(tf.stack([pred_start, answer_start]))
-        return (1 - ((tf.reduce_max(tf.stack([inter, 0])) + smooth) / (union + tf.reduce_min(tf.stack([inter, 0])) + smooth))) * smooth
+        return 1 - ((tf.reduce_max(tf.stack([inter, 0])) + smooth) / (union + tf.reduce_min(tf.stack([inter, 0])) + smooth)) + tf.abs(tf.reduce_min(tf.stack([inter, 0])) / size)
         # return tf.cond(tf.greater(pred_start, pred_end)
         #         , lambda: 2.0 * smooth
         #         , lambda: (1 - ((tf.reduce_max(tf.stack([inter, 0])) + smooth) / (union + tf.reduce_min(tf.stack([inter, 0])) + smooth))) * smooth)
@@ -259,7 +312,8 @@ class Aligner(object):
         return model
     
     def restore_checkpoint(self, checkpoint_dir: str) -> None:
-        self.checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir)).assert_consumed()
+        print(tf.train.latest_checkpoint(checkpoint_dir))
+        self.checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
     def save_checkpoint(self) -> None:
         self.checkpoint.save(file_prefix=self.checkpoint_prefix)

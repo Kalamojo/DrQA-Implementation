@@ -16,22 +16,25 @@ def fineTune(reader, retriever):
     reader.fine_tune_embedder(docs, vocab_save="vocab_v1T.vocab", embed_save="embeddings_v1T.npy")
 
 def main():
-    #doc_reader = Reader(glove_path="./data/glove.840B.300d.txt")
+    # doc_reader = Reader(glove_path="./data/glove.840B.300d.txt")
     doc_reader = Reader(vocab_path="vocab_v1T.vocab", embed_path="embeddings_v1T.npy")
     doc_retriever = Retriever(vectorizer_path="vectorizer_v1.pkl", matrix_path="matrix_v1.npz")
     # #doc_reader.embedder.save_embedder("vocab_v1.vocab", "embeddings_v1.npy")
-    #fineTune(doc_reader, doc_retriever)
+    # fineTune(doc_reader, doc_retriever)
 
-    query = "Who was the first Apostle of Jesus?"
+    query = "What is the evolution of the Digimon Agumon?"
     docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
     doc_reader.test_reader(docs, query, checkpoint_dir="models")
 
     #ho sang a version of Queen's Somebody to Love in 2004's Ella Enchanted?
     #("What year did the government of Zhejiang recognise folk religion as 'civil religion'?", 97)
     #During which centuries did ROme fall under the influence of Byzantine art?
+    #Demeter
+    #How many copies of each chromosome does a sexual organism have?
+    #What does Margulis think is the main driver of evolution?
 
     # pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
-    # doc_reader.train_reader(doc_retriever, pages, questions, answers, checkpoint_dir="models")
+    # doc_reader.train_reader2(doc_retriever, pages, questions, answers, checkpoint_dir="models")
     # #doc_reader.test_train()
 
     # aligner = Aligner(embed_dim=300)

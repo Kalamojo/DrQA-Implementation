@@ -2,10 +2,10 @@ from retriever import Retriever
 import json
 
 def main():
-    #doc_retriever = Retriever()
-    #doc_retriever.train_squad(squad_path="./data/train-v1.1.json", vectorizer_save="vectorizer_v1.pkl", matrix_save="matrix_v1.npz")
+    # doc_retriever = Retriever()
+    # doc_retriever.train_squad(squad_path="./data/train-v1.1.json", vectorizer_save="vectorizer_v1.pkl", matrix_save="matrix_v1.npz")
     doc_retriever = Retriever(vectorizer_path="vectorizer_v1.pkl", matrix_path="matrix_v1.npz")
-    query = "Who was the first president of the United States?"
+    query = "Who led the American Revolution to victory against Great Britain?"
     top_docs = doc_retriever.retrieve_docs(query)
 
     print(top_docs)
