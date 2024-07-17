@@ -111,12 +111,9 @@ class StartPredictor(Layer):
         product = K.dot(p_matrix, self.W)
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
-        product = tf.einsum('ijk,lmk->i', product, q_vector)
-        product = (product - tf.reduce_min(product)) / (tf.reduce_max(product) - tf.reduce_min(product))
-        #print("prod:", product.shape)
-        #product = K.squeeze(product, axis=-1)
-        #print("prod arg:", product.shape)
-        #print("new product shape", product.shape)
+        product = tf.einsum('ijk,lmk->ik', product, q_vector)
+        product = tf.expand_dims(product, axis=-1)
+        #product = K.softplus(product)
         return product
 
 @tf.keras.utils.register_keras_serializable(package='E-Predictor')
@@ -130,20 +127,27 @@ class EndPredictor(Layer):
         super(EndPredictor, self).build(input_shape)
     
     def call(self, x):
-        #print("weight", self.W)
         p_matrix, q_vector = x
         #print("input shapes:", p_matrix.shape, q_vector.shape)
         product = K.dot(p_matrix, self.W)
         #print("product shape", product.shape)
         #product = K.dot(product, K.permute_dimensions(q_vector, (2, 0, 1)))
-        product = tf.einsum('ijk,lmk->i', product, q_vector)
-        product = (product - tf.reduce_min(product)) / (tf.reduce_max(product) - tf.reduce_min(product))
-        #product = K.squeeze(product, axis=-1)
-        #print("new product shape", product.shape)
+        product = tf.einsum('ijk,lmk->ik', product, q_vector)
+        product = tf.expand_dims(product, axis=-1)
+        #product = K.softplus(product)
         return product
 
+@tf.keras.utils.register_keras_serializable(package='Ind-Formatter')
+class IndFormatter(Layer):
+    def __init__(self, **kwargs):
+        super(IndFormatter, self).__init__(**kwargs)
+    
+    def call(self, x):
+        result = tf.exp(tf.squeeze(x, axis=-1))
+        return result
+
 class Aligner(object):
-    def __init__(self, embed_dim: int, feature_dim: int, lr: float = 0.002) -> None:
+    def __init__(self, embed_dim: int, feature_dim: int, lr: float = 0.0002) -> None:
         super(Aligner, self).__init__()
         self.embed_dim = embed_dim
         self.feature_dim = feature_dim
@@ -172,16 +176,18 @@ class Aligner(object):
         # end_ind = self._softargmax(end_matrix, offset=tf.cast(start_ind, tf.int32))
         start_prod = self._prefix_product(start_matrix, end_matrix, tf.cast(True, dtype=tf.bool))
         end_prod = self._prefix_product(end_matrix, start_matrix, tf.cast(False, dtype=tf.bool))
-        start_ind = self._softargmax(start_prod)
-        end_ind = self._softargmax(end_prod)+1
+
+        start_ind = tf.argmax(start_prod)
+        end_ind = tf.argmax(end_prod)+1
         print(start_ind)
         print(end_ind)
 
         return start_ind, end_ind, start_prod, end_prod
 
     @tf.function(input_signature=[tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 300, 1], dtype=tf.float32),
-                                  tf.TensorSpec(shape=[None, 6, 1], dtype=tf.float32), tf.TensorSpec(shape=[None, 2], dtype=tf.float32)])
-    def train_step(self, query_embedding: tf.Tensor, paragraph_embeddings: tf.Tensor, feature_matrix: tf.Tensor, answer_spans: tf.Tensor) -> tf.Tensor:
+                                  tf.TensorSpec(shape=[None, 6, 1], dtype=tf.float32), tf.TensorSpec(shape=[None], dtype=tf.float32),
+                                  tf.TensorSpec(shape=[None], dtype=tf.float32)])
+    def train_step(self, query_embedding: tf.Tensor, paragraph_embeddings: tf.Tensor, feature_matrix: tf.Tensor, start_spans: tf.Tensor, end_spans: tf.Tensor) -> tf.Tensor:
         with tf.GradientTape() as qe_tape, tf.GradientTape() as qa_tape, tf.GradientTape() as sp_tape, tf.GradientTape() as ep_tape:
         #with tf.GradientTape() as tape:
             query_vector = self.q_encoder(query_embedding, training=True)
@@ -194,33 +200,23 @@ class Aligner(object):
             # start_ind = self._softargmax(start_matrix)
             # end_ind = self._softargmax(end_matrix, offset=tf.cast(start_ind, tf.int32))+1
             #print("end matrix:", end_matrix)
-            start_prod = self._prefix_product(start_matrix, end_matrix, tf.constant(True, dtype=tf.bool))
-            end_prod = self._prefix_product(end_matrix, start_matrix, tf.constant(False, dtype=tf.bool))
-            start_ind = self._softargmax(start_prod)
-            end_ind = self._softargmax(end_prod)+1
-            # print(start_ind)
-            # print(end_ind)
-            # print(prod_arr)
-            # #print(start_max, end_max)
-            # end_ind = self._softargmax(prod_arr)
-            # print("didf first")
-            # end_offset = tf.shape(end_matrix)[-1]-tf.cast(end_ind, dtype=tf.int32)+1
-            # start_ind = self._softargmax(start_matrix, end_offset=end_offset)
-            # print("did seconds")
-            # start_ind = tf.cast(tf.squeeze(tf.where(tf.equal(start_matrix, start_max))), dtype=tf.float32)
-            # end_ind = tf.cast(tf.squeeze(tf.where(tf.equal(end_matrix, end_max))), dtype=tf.float32)
+            # start_prod = self._prefix_product(start_matrix, end_matrix, tf.constant(True, dtype=tf.bool))
+            # end_prod = self._prefix_product(end_matrix, start_matrix, tf.constant(False, dtype=tf.bool))
+            losses = tf.nn.softmax_cross_entropy_with_logits(tf.stack([start_spans, end_spans]), tf.stack([start_matrix, end_matrix]))
+            #print("losses:", losses)
+            loss_avg = tf.reduce_mean(losses, axis=-1)
+            loss_1, loss_2 = tf.split(losses, 2)
+            # start_ind = self._softargmax(start_prod)
+            # end_ind = self._softargmax(end_prod)+1
 
-            # loss = self._calculate_loss(start_ind, end_ind, answer_spans[0][0], answer_spans[0][1])
-            # for i in range(1, len(answer_spans)):
-            #     loss = tf.reduce_min(tf.stack([loss, self._calculate_loss(start_ind, end_ind, answer_spans[i][0], answer_spans[i][1])]))
-            loss = tf.reduce_min(tf.map_fn(lambda span: self._calculate_loss(start_ind, end_ind, span[0], span[1], tf.cast(tf.shape(start_matrix)[-1], dtype=tf.float32)), elems=answer_spans))
+            # loss = tf.reduce_min(tf.map_fn(lambda span: self._calculate_loss(start_ind, end_ind, span[0], span[1], tf.cast(tf.shape(start_matrix)[-1], dtype=tf.float32)), elems=answer_spans))
         #print("loss:", loss)
         
         #variables = self.q_aligner.trainable_variables + self.q_encoder.trainable_variables + self.start_pred.trainable_variables + self.end_pred.trainable_variables
-        qa_gradients = qa_tape.gradient(loss, self.q_aligner.trainable_variables)
-        qe_gradients = qe_tape.gradient(loss, self.q_encoder.trainable_variables)
-        sp_gradients = sp_tape.gradient(loss, self.start_pred.trainable_variables)
-        ep_gradients = ep_tape.gradient(loss, self.end_pred.trainable_variables)
+        qa_gradients = qa_tape.gradient(loss_avg, self.q_aligner.trainable_variables)
+        qe_gradients = qe_tape.gradient(loss_avg, self.q_encoder.trainable_variables)
+        sp_gradients = sp_tape.gradient(loss_1, self.start_pred.trainable_variables)
+        ep_gradients = ep_tape.gradient(loss_2, self.end_pred.trainable_variables)
         #print("grads:", qa_gradients, qe_gradients, sp_gradients, ep_gradients)
         
         self.qa_optimizer.apply_gradients(zip(qa_gradients, self.q_aligner.trainable_variables))
@@ -229,7 +225,7 @@ class Aligner(object):
         self.ep_optimizer.apply_gradients(zip(ep_gradients, self.end_pred.trainable_variables))
 
         #print("applied gradients")
-        return loss, start_ind, end_ind
+        return loss_avg, losses
 
 
 
@@ -256,13 +252,16 @@ class Aligner(object):
                                   loop_vars=(matrix, 0, reverse)))
         #print("cumulative max:", cumulative_max)
         return cumulative_max
-    
-    
-    
-    def _softargmax(self, x, offset=0, beta=1e10) -> tf.Tensor:
-        x = tf.convert_to_tensor(x)
-        x_range = tf.range(offset, tf.shape(x)[-1], dtype=x.dtype)
-        return tf.reduce_sum(tf.nn.softmax(x[offset:]*beta) * x_range, axis=-1)
+
+    def gumbel_softmax(self, logits, temperature, eps=1e-20):
+        gumbel_noise = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(logits)) + eps) + eps)
+        y = logits + gumbel_noise
+        return tf.nn.softmax(y / temperature)
+
+    def _softargmax(self, x, temp=0.01) -> tf.Tensor:
+        x_range = tf.range(tf.shape(x)[-1], dtype=x.dtype)
+        probs = self.gumbel_softmax(x, temp)
+        return tf.reduce_sum(probs * x_range, axis=-1)
     
     def _calculate_loss(self, pred_start: tf.Tensor, pred_end: tf.Tensor, answer_start: int, answer_end: int, size: tf.Tensor, smooth: float = 0.01) -> tf.Tensor:
         inter = tf.reduce_min(tf.stack([pred_end, answer_end])) - tf.reduce_max(tf.stack([pred_start, answer_start]))
@@ -285,8 +284,8 @@ class Aligner(object):
 
     def create_question_encoder(self, hidden_units: int = 20, activation: str = "tanh") -> Model:
         x = Input(shape=(self.embed_dim, 1))
-        RNN_layer = layers.SimpleRNN(hidden_units, return_sequences=True, activation=activation)(x)
-        attention_layer = Attention()(RNN_layer)
+        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, return_sequences=True, activation=activation))(x)
+        attention_layer = Attention()(LSTM_layer)
         model = Model(x, attention_layer, name="Question_Encoder")
         # print("input", input_shape)
         # print("expected", (1, input_shape[0]))
@@ -294,20 +293,26 @@ class Aligner(object):
         assert model.output_shape == (1, self.embed_dim, 1)
         return model
     
-    def create_start_predictor(self) -> Model:
+    def create_start_predictor(self, hidden_units: int = 20, activation: str = "tanh") -> Model:
         x_p = Input(shape=(self.embed_dim * 2 + self.feature_dim, 1))
         x_q = Input(shape=(self.embed_dim, 1))
         start_predictor = StartPredictor()([x_p, x_q])
-        model = Model([x_p, x_q], start_predictor, name="Start_Predictor")
+        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, activation=activation))(start_predictor)
+        Dense_layer = layers.Dense(1, activation=activation)(LSTM_layer)
+        ind_format = IndFormatter()(Dense_layer)
+        model = Model([x_p, x_q], ind_format, name="Start_Predictor")
         #print("output shape:", model.output_shape)
         assert model.output_shape == (None,)
         return model
     
-    def create_end_predictor(self) -> Model:
+    def create_end_predictor(self, hidden_units: int = 20, activation: str = "tanh") -> Model:
         x_p = Input(shape=(self.embed_dim * 2 + self.feature_dim, 1))
         x_q = Input(shape=(self.embed_dim, 1))
         end_predictor = EndPredictor()([x_p, x_q])
-        model = Model([x_p, x_q], end_predictor, name="End_Predictor")
+        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, activation=activation))(end_predictor)
+        Dense_layer = layers.Dense(1, activation=activation)(LSTM_layer)
+        ind_format = IndFormatter()(Dense_layer)
+        model = Model([x_p, x_q], ind_format, name="End_Predictor")
         assert model.output_shape == (None,)
         return model
     

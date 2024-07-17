@@ -22,7 +22,7 @@ def main():
     # #doc_reader.embedder.save_embedder("vocab_v1.vocab", "embeddings_v1.npy")
     # fineTune(doc_reader, doc_retriever)
 
-    query = "What is the evolution of the Digimon Agumon?"
+    query = "What evolves from the Digimon Agumon?"
     docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
     doc_reader.test_reader(docs, query, checkpoint_dir="models")
 

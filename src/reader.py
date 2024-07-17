@@ -136,6 +136,7 @@ class Reader(object):
         self.aligner.load_checkpoint(checkpoint_dir)
         #self.aligner.checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
         #print(tf.train.latest_checkpoint(checkpoint_dir))
+
         self.aligner.restore_checkpoint(checkpoint_dir)
 
         self.aligner.q_encoder.summary()
@@ -157,6 +158,7 @@ class Reader(object):
         
         zeroes = np.zeros((max_words - len(query_tokens), self.embedder.dimensions))
         query_embedding = tf.convert_to_tensor(np.concatenate((zeroes, np.array(list(map(self.embedder.embed, query_tokens)))), dtype=np.float32).reshape((max_words, self.embedder.dimensions, 1)))
+        #query_embedding = tf.convert_to_tensor(np.array(list(map(self.embedder.embed, query_tokens)), dtype=np.float32).reshape((len(query_tokens), self.embedder.dimensions, 1)))
         p_embeddings = np.array(list(map(self.embedder.embed, all_words)), dtype=np.float32)
         p_embeddings_shaped = tf.convert_to_tensor(p_embeddings.reshape((p_embeddings.shape[0], p_embeddings.shape[1], 1)))
 
@@ -167,7 +169,7 @@ class Reader(object):
         print(ep)
     
     def train_reader2(self, doc_retriever: Retriever, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], 
-                     num_docs = 5, num_questions: int = 20, checkpoint_dir: str = None) -> None:
+                     num_docs = 5, num_questions: int = 2000, checkpoint_dir: str = None) -> None:
         questions_list = [TreebankWordTokenizer().tokenize(question[0]) for question in questions]
         max_words = max(len(q_list) for q_list in questions_list)
         self.aligner.q_encoder.summary()
@@ -184,7 +186,8 @@ class Reader(object):
         query_embedding_list = []
         p_embeddings_shaped_list = []
         matrix_arr_list = []
-        answer_spans_list = []
+        start_spans_list = []
+        end_spans_list = []
         
         index_list = list(range(len(questions)))
         random.shuffle(index_list)
@@ -229,7 +232,8 @@ class Reader(object):
             print("num paragraphs:", len(paragraphs))
             print("num words:", len(all_words))
             print("answers:")
-            answer_spans = []
+            start_spans = np.zeros(len(all_words))
+            end_spans = np.zeros(len(all_words))
             #words = list(self.__get_tokenized(retrieved_docs[j]))
             #token_spans = self.__get_tokenized_spans(correct_doc)
             for answer in answers[i]:
@@ -242,9 +246,10 @@ class Reader(object):
                 #print("test:", all_words[doc_offset-1], all_words[doc_offset], all_words[doc_offset+1])
                 print('\t', all_words[doc_offset+answer_span[0]:doc_offset+answer_span[1]+1])
                 print('\t', correct_doc[answer[0]: answer[1]])
-                answer_spans.append((answer_span[0]+doc_offset, answer_span[1]+doc_offset+1))
+                start_spans[answer_span[0]+doc_offset] = 1
+                end_spans[answer_span[1]+doc_offset] = 1
+                print("Real indices:", (answer_span[0]+doc_offset, answer_span[1]+doc_offset))
             #answer_spans = tf.convert_to_tensor(answer_spans, dtype=tf.float32)
-            print("Real indices:", answer_spans)
             #return;
             constructed_vectors = self.__construct_vectors(paragraphs, all_words, questions_list[i], embed=True)
             matrix_arr = constructed_vectors[:, -6:]
@@ -267,16 +272,19 @@ class Reader(object):
             query_embedding_list.append(query_embedding)
             p_embeddings_shaped_list.append(p_embeddings_shaped)
             matrix_arr_list.append(matrix_arr)
-            answer_spans_list.append(answer_spans)
+            start_spans_list.append(start_spans)
+            end_spans_list.append(end_spans)
             print("correct ind:", correct_ind)
 
-            if (ind + 1) % int(num_questions / 10) == 0:
+            if (ind + 1) % int(num_questions / 20) == 0:
                 print("ML Stuff")
                 for _ in range(10): print("V")
                 #print("Time taken:", end - start, "seconds")
                 #time.sleep(5)
                 for mind in range(len(query_embedding_list)):
-                    loss = self.aligner.train_step(tf.convert_to_tensor(query_embedding_list[mind]), tf.convert_to_tensor(p_embeddings_shaped_list[mind]), tf.convert_to_tensor(matrix_arr_list[mind]), tf.convert_to_tensor(answer_spans_list[mind], dtype=tf.float32))
+                    loss = self.aligner.train_step(tf.convert_to_tensor(query_embedding_list[mind]), tf.convert_to_tensor(p_embeddings_shaped_list[mind]), 
+                                                   tf.convert_to_tensor(matrix_arr_list[mind]), tf.convert_to_tensor(start_spans_list[mind], dtype=tf.float32),
+                                                   tf.convert_to_tensor(end_spans_list[mind], dtype=tf.float32))
                     print("--")
                     print("loss:", loss)
                     print("--")
@@ -287,7 +295,8 @@ class Reader(object):
                 query_embedding_list = []
                 p_embeddings_shaped_list = []
                 matrix_arr_list = []
-                answer_spans_list = []
+                start_spans_list = []
+                end_spans_list = []
             
             ind += 1
         
@@ -359,6 +368,8 @@ class Reader(object):
             print(questions[i])
             print("answers:")
             answer_spans = []
+            start_spans = np.zeros(len(all_words))
+            end_spans = np.zeros(len(all_words))
             #words = list(self.__get_tokenized(retrieved_docs[j]))
             #token_spans = self.__get_tokenized_spans(correct_doc)
             for answer in answers[i]:
@@ -372,7 +383,10 @@ class Reader(object):
                 print('\t', all_words[doc_offset+answer_span[0]:doc_offset+answer_span[1]+1])
                 print('\t', correct_doc[answer[0]: answer[1]])
                 answer_spans.append((answer_span[0]+doc_offset, answer_span[1]+doc_offset+1))
-            answer_spans = tf.convert_to_tensor(answer_spans, dtype=tf.float32)
+                start_spans[answer_span[0]+doc_offset] = 1
+                end_spans[answer_span[1]+doc_offset] = 1
+            start_spans = tf.convert_to_tensor(start_spans, dtype=tf.float32)
+            end_spans = tf.convert_to_tensor(end_spans, dtype=tf.float32)
             print("Real indices:", answer_spans)
             #return;
             matrix_arr = tf.convert_to_tensor(self.__construct_vectors(paragraphs, all_words, questions_list[i]))
@@ -382,11 +396,10 @@ class Reader(object):
             p_embeddings = np.array(list(map(self.embedder.embed, all_words)), dtype=np.float32)
             p_embeddings_shaped = tf.convert_to_tensor(p_embeddings.reshape((p_embeddings.shape[0], p_embeddings.shape[1], 1)))
 
-            loss, start_ind, end_ind = self.aligner.train_step(query_embedding, p_embeddings_shaped, matrix_arr, answer_spans)
+            loss = self.aligner.train_step(query_embedding, p_embeddings_shaped, matrix_arr, start_spans, end_spans)
 
             print("--")
             print("loss:", loss)
-            print("predicted:", (start_ind, end_ind))
             print("--")
 
             # if (ind + 1) % int(num_questions / 5) == 0:
