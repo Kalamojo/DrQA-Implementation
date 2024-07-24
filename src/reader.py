@@ -41,8 +41,6 @@ class Embedder(object):
             return self.unknown_vec
 
     def fine_tune(self, words: list[str], documents: list[str], max_iterations: int = 1000, vocab_save: str|None = None, embed_save: str|None = None) -> None:
-        # new_words = [token for token in words if token not in self.vocab]
-        # print(len(new_words))
         corp_vocab = list(set(words))
         big_doc = [' '.join(documents)]
         vectorizer = CountVectorizer(ngram_range=(1,1), vocabulary=corp_vocab)
@@ -140,13 +138,13 @@ class Reader(object):
         print("Setting spacy took", end - start, "seconds")
 
     def test_reader(self, documents: list[str], query: str, max_q: int, max_p: int, checkpoint_dir: str = None):
-        # self.aligner.load_checkpoint(checkpoint_dir)
-        # self.aligner.restore_checkpoint(checkpoint_dir)
+        self.aligner.load_checkpoint(checkpoint_dir)
+        self.aligner.restore_checkpoint(checkpoint_dir)
 
-        # self.aligner.q_encoder.summary()
-        # self.aligner.q_aligner.summary()
-        # self.aligner.start_pred.summary()
-        # self.aligner.end_pred.summary()
+        self.aligner.q_encoder.summary()
+        self.aligner.q_aligner.summary()
+        self.aligner.start_pred.summary()
+        self.aligner.end_pred.summary()
 
         query_tokens = TreebankWordTokenizer().tokenize(query)
 
@@ -157,15 +155,10 @@ class Reader(object):
         pad_vals = []
         for i in range(len(documents)):
             #paragraph_list = list(filter(None, documents[i].split('\n\n')))
-            paragraph_inds = list(self.split_with_indicies(documents[i], '\n'))
+            paragraph_inds = list(self.__split_inds(documents[i], '\n'))
             paragraph_list = [documents[i][inds[0]:inds[1]] for inds in paragraph_inds]
-            #return;
-            words = self.flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
-            word_spans = []
-            #paragraph_diff = 0
-            for k in range(len(paragraph_list)):
-                word_spans += self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0])
-                #paragraph_diff += len(paragraph_list[k]) + 2
+            words = self.__flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
+            word_spans = [self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0]) for k in range(len(paragraph_list))]
             all_word_spans.append(word_spans)
         
             matrix_arr = self.__construct_vectors(paragraph_list, words, query_tokens)
@@ -196,14 +189,6 @@ class Reader(object):
             print(documents[i][all_word_spans[i][int(start_argmax[i]) - pad_vals[i]][0]:all_word_spans[i][int(end_argmax[i]) - pad_vals[i]][1]])
             print('---')
     
-    def split_with_indicies(self, text: str, separator: str = ' ') -> Generator[tuple[int, int]]:
-        start = 0
-        for key, group in groupby(text, lambda x: x[:len(separator)]==separator):
-            end = start + sum(1 for _ in group)
-            if not key:
-                yield start, end
-            start = end
-    
     def prepare_training_data(self, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], save_dir: str,
                               num_questions: int = 10000) -> None:
         self.set_spacy_embedder()
@@ -216,8 +201,10 @@ class Reader(object):
         ind = 0
         query_list = [TreebankWordTokenizer().tokenize(questions[i][0]) for i in index_list[:num_questions]]
         max_q = max((len(query) for query in query_list))
-        paragraph_lists = [list(filter(None, documents[questions[i][1]].split('\n\n'))) for i in index_list[:num_questions]]
-        words_list = [self.flatten(self.__get_tokenized(paragraph) for paragraph in paragraph_list) for paragraph_list in paragraph_lists]
+        #paragraph_lists = [list(filter(None, documents[questions[i][1]].split('\n\n'))) for i in index_list[:num_questions]]
+        paragraph_inds_list = [list(self.__split_inds(documents[questions[i][1]], '\n')) for i in index_list[:num_questions]]
+        paragraph_lists = [[documents[questions[i][1]][inds[0]:inds[1]] for inds in paragraph_inds[i]] for i in index_list[:num_questions]]
+        words_list = [self.__flatten(self.__get_tokenized(paragraph) for paragraph in paragraph_list) for paragraph_list in paragraph_lists]
         max_p = max((len(words) for words in words_list))
         print("Max q:", max_q, "Max p:", max_p)
 
@@ -234,13 +221,10 @@ class Reader(object):
 
                 correct_doc = documents[questions[i][1]]
                 paragraph_list = paragraph_lists[ind]
+                paragraph_inds = paragraph_inds_list[ind]
                 all_words = words_list[ind]
                 max_p = max(max_p, len(all_words))
-                correct_spans = []
-                correct_diff = 0
-                for k in range(len(paragraph_list)):
-                    correct_spans += self.__get_tokenized_spans(paragraph_list[k], inc=correct_diff)
-                    correct_diff += len(paragraph_list[k]) + 2
+                correct_spans = [self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0]) for k in range(len(paragraph_list))]
 
                 print("num paragraphs:", len(paragraph_list))
                 print("num words:", len(all_words))
@@ -309,6 +293,14 @@ class Reader(object):
         self.aligner.save_checkpoint()
         print("-----")
 
+    def __split_inds(self, text: str, separator: str = ' ') -> Generator[tuple[int, int]]:
+        start = 0
+        for key, group in groupby(text, lambda x: x[:len(separator)]==separator):
+            end = start + sum(1 for _ in group)
+            if not key:
+                yield start, end
+            start = end
+
     def __get_answer_span(self, answer: tuple[int, int], spans: Iterator[tuple[int, int]]) -> tuple[int, int]:
         start = -1
         end = -1
@@ -329,14 +321,14 @@ class Reader(object):
         return start, end
     
     def __get_tokenized_spans(self, corpus: str, inc: int = 0):
-        return self.flatten(((start+sent_start+inc, end+sent_start+inc) for start, end in TreebankWordTokenizer().span_tokenize(corpus[sent_start:sent_end])) for sent_start, sent_end in PunktSentenceTokenizer().span_tokenize(corpus))
+        return self.__flatten(((start+sent_start+inc, end+sent_start+inc) for start, end in TreebankWordTokenizer().span_tokenize(corpus[sent_start:sent_end])) for sent_start, sent_end in PunktSentenceTokenizer().span_tokenize(corpus))
 
     def __construct_vectors(self, paragraphs: list[str], all_words: list[str], query_list: list[str], embed: bool = False) -> np.ndarray:
         matrix_list = []
         start = time.time()
 
         counter = Counter(all_words)
-        matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), set(query_list), counter, embed)
+        matrix_list = self.__preprocess_parallel(paragraphs, len(paragraphs), set(query_list), counter, embed)
 
         matrix_arr = np.vstack(matrix_list)
         matrix_arr[:, -3:] = matrix_arr[:, -3:]/np.linalg.norm(matrix_arr[:, -3:], axis=0)
@@ -344,6 +336,22 @@ class Reader(object):
         end = time.time()
         print("took", end - start, "seconds")
         return matrix_arr.astype(np.float32)
+    
+    def __preprocess_parallel(self, texts, num_texts: int, query_set: set[str], counter: Counter, embed: bool, chunksize: int = 80, n_jobs: int = 7) -> list[np.ndarray]:
+        executor = Parallel(n_jobs=n_jobs, backend='threading', prefer='processes', max_nbytes=None)
+        do = delayed(self.__process_chunk)
+        tasks = (do(chunk, query_set, counter, embed) for chunk in self.__chunker(texts, num_texts, chunksize=chunksize))
+        result = executor(tasks)
+        return self.__flatten(result)
+
+    def __chunker(self, iterable, total_length, chunksize) -> Generator:
+        return (iterable[pos: pos + chunksize] for pos in range(0, total_length, chunksize))
+
+    def __process_chunk(self, texts, query_set: set[str], counter: Counter, embed: bool) -> list[list[np.ndarray]]:
+        matrix_list = []
+        for doc in self.nlp.pipe(texts, batch_size=20):
+            matrix_list.append(self.__featurize(doc, query_set, counter, embed))
+        return matrix_list
 
     def __featurize(self, doc: Doc, query_set: set[str], counter: Counter, embed: bool) -> list[np.ndarray]:
         matrix = []
@@ -356,38 +364,6 @@ class Reader(object):
             else:
                 matrix.append(np.concatenate((match_vec, token_vec)))
         return matrix
-    
-    def chunker(self, iterable, total_length, chunksize) -> Generator:
-        return (iterable[pos: pos + chunksize] for pos in range(0, total_length, chunksize))
-    
-    def flatten(self, list_of_lists: list[list]) -> list:
-        return [item for sublist in list_of_lists for item in sublist]
-        #return list(chain.from_iterable(list_of_lists))
-    
-    def process_chunk(self, texts, query_set: set[str], counter: Counter, embed: bool) -> list[list[np.ndarray]]:
-        matrix_list = []
-        for doc in self.nlp.pipe(texts, batch_size=20):
-            matrix_list.append(self.__featurize(doc, query_set, counter, embed))
-        return matrix_list
-    
-    def preprocess_parallel(self, texts, num_texts: int, query_set: set[str], counter: Counter, embed: bool, chunksize: int = 80, n_jobs: int = 7) -> list[np.ndarray]:
-        executor = Parallel(n_jobs=n_jobs, backend='threading', prefer='processes', max_nbytes=None)
-        do = delayed(self.process_chunk)
-        tasks = (do(chunk, query_set, counter, embed) for chunk in self.chunker(texts, num_texts, chunksize=chunksize))
-        result = executor(tasks)
-        return self.flatten(result)
-
-    def fine_tune_embedder(self, documents: list[str], common_count: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
-        tf.compat.v1.disable_eager_execution()
-        joined_docs = ' '.join(documents)
-        all_words = self.__get_tokenized(joined_docs)
-        print("nltk done tokenizing")
-        counter = Counter(all_words)
-        common_words, counts = zip(*counter.most_common(common_count))
-        self.embedder.fine_tune(common_words, documents, max_iterations=2000, vocab_save=vocab_save, embed_save=embed_save)
-    
-    def __get_tokenized(self, corpus: str) -> Iterator:
-        return chain.from_iterable(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(corpus))
 
     def __exact_match(self, word: Token, question: set[str]) -> np.ndarray:
         og = int(word.text in question)
@@ -402,3 +378,19 @@ class Reader(object):
         else:
             ner = 0
         return np.array([pos, ner, freq])
+
+    def fine_tune_embedder(self, documents: list[str], common_count: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
+        tf.compat.v1.disable_eager_execution()
+        joined_docs = ' '.join(documents)
+        all_words = self.__get_tokenized(joined_docs)
+        print("nltk done tokenizing")
+        counter = Counter(all_words)
+        common_words, counts = zip(*counter.most_common(common_count))
+        self.embedder.fine_tune(common_words, documents, max_iterations=2000, vocab_save=vocab_save, embed_save=embed_save)
+    
+    def __get_tokenized(self, corpus: str) -> Iterator:
+        return self.__flatten(TreebankWordTokenizer().tokenize(sentence) for sentence in PunktSentenceTokenizer().tokenize(corpus))
+
+    def __flatten(self, list_of_lists: list[list]) -> list:
+        return [item for sublist in list_of_lists for item in sublist]
+        #return list(chain.from_iterable(list_of_lists))
