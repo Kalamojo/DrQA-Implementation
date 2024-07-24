@@ -3,3 +3,4 @@ scikit-learn
 mittens
 nltk
 spacy
+npy_append_array

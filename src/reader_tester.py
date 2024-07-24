@@ -4,6 +4,7 @@ import spacy
 import json
 from nltk import word_tokenize, TreebankWordTokenizer, NLTKWordTokenizer, string_span_tokenize, WordPunctTokenizer, sent_tokenize, PunktSentenceTokenizer
 from itertools import chain
+import csv
 # from aligner import Aligner, AlignmentLayer, Attention
 # import numpy as np
 
@@ -17,14 +18,19 @@ def fineTune(reader, retriever):
 
 def main():
     # doc_reader = Reader(glove_path="./data/glove.840B.300d.txt")
-    doc_reader = Reader(vocab_path="vocab_v1T.vocab", embed_path="embeddings_v1T.npy")
+    doc_reader = Reader(vocab_path="vocab_v1T.vocab", embed_path="embeddings_v1T.npy", max_q=38, max_p=17200)
     doc_retriever = Retriever(vectorizer_path="vectorizer_v1.pkl", matrix_path="matrix_v1.npz")
     # #doc_reader.embedder.save_embedder("vocab_v1.vocab", "embeddings_v1.npy")
     # fineTune(doc_reader, doc_retriever)
 
-    query = "What evolves from the Digimon Agumon?"
+    # s = "howdy folks"
+    # spans = list(TreebankWordTokenizer().span_tokenize(s))
+    # print(spans)
+    # print(s[spans[1][0]:spans[1][1]])
+
+    query = "What was Beyoncé's first breakout album?"
     docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
-    doc_reader.test_reader(docs, query, checkpoint_dir="models")
+    doc_reader.test_reader(docs, query, 38, 17200, checkpoint_dir="models/")
 
     #ho sang a version of Queen's Somebody to Love in 2004's Ella Enchanted?
     #("What year did the government of Zhejiang recognise folk religion as 'civil religion'?", 97)
@@ -33,8 +39,12 @@ def main():
     #How many copies of each chromosome does a sexual organism have?
     #What does Margulis think is the main driver of evolution?
 
+    # #pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
+    # doc_reader.train_reader(data_dir="./data/", count=1000, checkpoint_dir="models")
+    # #doc_reader.test_train()
+
     # pages, questions, answers = doc_retriever.get_squad_qas("./data/train-v1.1.json")
-    # doc_reader.train_reader2(doc_retriever, pages, questions, answers, checkpoint_dir="models")
+    # doc_reader.prepare_training_data(pages, questions, answers, save_dir="./data/")
     # #doc_reader.test_train()
 
     # aligner = Aligner(embed_dim=300)

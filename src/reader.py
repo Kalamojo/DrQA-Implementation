@@ -1,7 +1,7 @@
 from aligner import Aligner
-from retriever import Retriever
 import csv
 import numpy as np
+from npy_append_array import NpyAppendArray
 from mittens import Mittens
 from sklearn.feature_extraction.text import CountVectorizer
 from nltk import TreebankWordTokenizer, PunktSentenceTokenizer
@@ -10,12 +10,13 @@ from spacy.vocab import Vocab
 from spacy.tokens import Token, Doc
 from spacy.vectors import Vectors
 from collections import Counter
-from itertools import chain
+from itertools import chain, groupby
 import random
 from collections.abc import Iterator, Generator
 import warnings
 import time
 from joblib import Parallel, delayed
+from os import path
 import tensorflow as tf
 tf.compat.v1.enable_eager_execution()
 physical_devices = tf.config.list_physical_devices('GPU')
@@ -27,7 +28,8 @@ class Embedder(object):
         self.embed_path = embed_path
         self.glove_path = glove_path
         self.vocab, self.embeddings = self.__load_embedder()
-        self.dimensions = self.embeddings[0].shape[0]
+        self.unknown_vec = self.__get_unknown_vector()
+        self.dimensions = self.unknown_vec.shape[0]
         print(self.dimensions)
     
     def embed(self, word: str) -> np.ndarray:
@@ -36,9 +38,9 @@ class Embedder(object):
             return self.embeddings[ind]
         except ValueError:
             #print(word)
-            return np.zeros(self.dimensions)
+            return self.unknown_vec
 
-    def fine_tune(self, words: list[str], documents: list[str], max_iterations: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:
+    def fine_tune(self, words: list[str], documents: list[str], max_iterations: int = 1000, vocab_save: str|None = None, embed_save: str|None = None) -> None:
         # new_words = [token for token in words if token not in self.vocab]
         # print(len(new_words))
         corp_vocab = list(set(words))
@@ -71,6 +73,10 @@ class Embedder(object):
         with open(vocab_path, 'w', encoding='utf-8') as f:
             f.writelines((line + '\n' for line in self.vocab))
         np.save(embed_path, self.embeddings)
+
+    def __get_unknown_vector(self) -> np.ndarray:
+        return np.array("0.22418134 -0.28881392 0.13854356 0.00365387 -0.12870757 0.10243822 0.061626635 0.07318011 -0.061350107 -1.3477012 0.42037755 -0.063593924 -0.09683349 0.18086134 0.23704372 0.014126852 0.170096 -1.1491593 0.31497982 0.06622181 0.024687296 0.076693475 0.13851812 0.021302193 -0.06640582 -0.010336159 0.13523154 -0.042144544 -0.11938788 0.006948221 0.13333307 -0.18276379 0.052385733 0.008943111 -0.23957317 0.08500333 -0.006894406 0.0015864656 0.063391194 0.19177166 -0.13113557 -0.11295479 -0.14276934 0.03413971 -0.034278486 -0.051366422 0.18891625 -0.16673574 -0.057783455 0.036823478 0.08078679 0.022949161 0.033298038 0.011784158 0.05643189 -0.042776518 0.011959623 0.011552498 -0.0007971594 0.11300405 -0.031369694 -0.0061559738 -0.009043574 -0.415336 -0.18870236 0.13708843 0.005911723 -0.113035575 -0.030096142 -0.23908928 -0.05354085 -0.044904727 -0.20228513 0.0065645403 -0.09578946 -0.07391877 -0.06487607 0.111740574 -0.048649278 -0.16565254 -0.052037314 -0.078968436 0.13684988 0.0757494 -0.006275573 0.28693774 0.52017444 -0.0877165 -0.33010918 -0.1359622 0.114895485 -0.09744406 0.06269521 0.12118575 -0.08026362 0.35256687 -0.060017522 -0.04889904 -0.06828978 0.088740796 0.003964443 -0.0766291 0.1263925 0.07809314 -0.023164088 -0.5680669 -0.037892066 -0.1350967 -0.11351585 -0.111434504 -0.0905027 0.25174105 -0.14841858 0.034635577 -0.07334565 0.06320108 -0.038343467 -0.05413284 0.042197507 -0.090380974 -0.070528865 -0.009174437 0.009069661 0.1405178 0.02958134 -0.036431845 -0.08625681 0.042951006 0.08230793 0.0903314 -0.12279937 -0.013899368 0.048119213 0.08678239 -0.14450377 -0.04424887 0.018319942 0.015026873 -0.100526 0.06021201 0.74059093 -0.0016333034 -0.24960588 -0.023739101 0.016396184 0.11928964 0.13950661 -0.031624354 -0.01645025 0.14079992 -0.0002824564 -0.08052984 -0.0021310581 -0.025350995 0.086938225 0.14308536 0.17146006 -0.13943303 0.048792403 0.09274929 -0.053167373 0.031103406 0.012354865 0.21057427 0.32618305 0.18015954 -0.15881181 0.15322933 -0.22558987 -0.04200665 0.0084689725 0.038156632 0.15188617 0.13274793 0.113756925 -0.095273495 -0.049490947 -0.10265804 -0.27064866 -0.034567792 -0.018810693 -0.0010360252 0.10340131 0.13883452 0.21131058 -0.01981019 0.1833468 -0.10751636 -0.03128868 0.02518242 0.23232952 0.042052146 0.11731903 -0.15506615 0.0063580726 -0.15429358 0.1511722 0.12745973 0.2576985 -0.25486213 -0.0709463 0.17983761 0.054027 -0.09884228 -0.24595179 -0.093028545 -0.028203879 0.094398156 0.09233813 0.029291354 0.13110267 0.15682974 -0.016919162 0.23927948 -0.1343307 -0.22422817 0.14634751 -0.064993896 0.4703685 -0.027190214 0.06224946 -0.091360025 0.21490277 -0.19562101 -0.10032754 -0.09056772 -0.06203493 -0.18876675 -0.10963594 -0.27734384 0.12616494 -0.02217992 -0.16058226 -0.080475815 0.026953284 0.110732645 0.014894041 0.09416802 0.14299914 -0.1594008 -0.066080004 -0.007995227 -0.11668856 -0.13081996 -0.09237365 0.14741232 0.09180138 0.081735 0.3211204 -0.0036552632 -0.047030564 -0.02311798 0.048961394 0.08669574 -0.06766279 -0.50028914 -0.048515294 0.14144728 -0.032994404 -0.11954345 -0.14929578 -0.2388355 -0.019883996 -0.15917352 -0.052084364 0.2801028 -0.0029121689 -0.054581646 -0.47385484 0.17112483 -0.12066923 -0.042173345 0.1395337 0.26115036 0.012869649 0.009291686 -0.0026459037 -0.075331464 0.017840583 -0.26869613 -0.21820338 -0.17084768 -0.1022808 -0.055290595 0.13513643 0.12362477 -0.10980586 0.13980341 -0.20233242 0.08813751 0.3849736 -0.10653763 -0.06199595 0.028849555 0.03230154 0.023856193 0.069950655 0.19310954 -0.077677034 -0.144811"
+                        .split(" "), dtype=np.float32)
 
     def __load_embedder(self) -> tuple[list[str], list[np.ndarray]]:
         if self.vocab_path is not None and self.embed_path is not None:
@@ -113,14 +119,16 @@ class NLTKCustomTokenizer(object):
         return Doc(self.vocab, words=words, spaces=spaces)
 
 class Reader(object):
-    def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None) -> None:
+    def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None, max_q: int = -1, max_p: int = -1, batch_size: int = 32) -> None:
         self.embedder = Embedder(vocab_path, embed_path, glove_path)
         #spacy.prefer_gpu()
         self.nlp = spacy.load("en_core_web_sm", exclude=['parser', 'tok2vec'])
         self.nlp.tokenizer = NLTKCustomTokenizer(self.nlp.vocab)
         self.feature_dim = 6
-        self.aligner = Aligner(self.embedder.dimensions, self.feature_dim)
-        self.train = False
+        self.max_q = max_q
+        self.max_p = max_p
+        self.aligner = Aligner(self.embedder.dimensions, self.max_q, self.max_p)
+        self.batch_size = batch_size
 
     def set_spacy_embedder(self) -> None:
         start = time.time()
@@ -131,185 +139,152 @@ class Reader(object):
         end = time.time()
         print("Setting spacy took", end - start, "seconds")
 
-    def test_reader(self, documents: list[str], query: str, checkpoint_dir: str = None, max_words: int = 59):
-        #tf.compat.v1.disable_eager_execution()
-        self.aligner.load_checkpoint(checkpoint_dir)
-        #self.aligner.checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
-        #print(tf.train.latest_checkpoint(checkpoint_dir))
+    def test_reader(self, documents: list[str], query: str, max_q: int, max_p: int, checkpoint_dir: str = None):
+        # self.aligner.load_checkpoint(checkpoint_dir)
+        # self.aligner.restore_checkpoint(checkpoint_dir)
 
-        self.aligner.restore_checkpoint(checkpoint_dir)
+        # self.aligner.q_encoder.summary()
+        # self.aligner.q_aligner.summary()
+        # self.aligner.start_pred.summary()
+        # self.aligner.end_pred.summary()
 
-        self.aligner.q_encoder.summary()
-        self.aligner.q_aligner.summary()
-        self.aligner.start_pred.summary()
-        self.aligner.end_pred.summary()
-
-        paragraphs = []
-        all_words = []
-        for i in range(len(documents)):
-            paragraph_list = list(filter(None, documents[i].split('\n\n')))
-            #words = list(self.__get_tokenized(retrieved_docs[j]))
-            words = self.flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
-            paragraphs += paragraph_list
-            all_words += words
-        
         query_tokens = TreebankWordTokenizer().tokenize(query)
-        matrix_arr = tf.convert_to_tensor(self.__construct_vectors(paragraphs, all_words, query_tokens))
-        
-        zeroes = np.zeros((max_words - len(query_tokens), self.embedder.dimensions))
-        query_embedding = tf.convert_to_tensor(np.concatenate((zeroes, np.array(list(map(self.embedder.embed, query_tokens)))), dtype=np.float32).reshape((max_words, self.embedder.dimensions, 1)))
-        #query_embedding = tf.convert_to_tensor(np.array(list(map(self.embedder.embed, query_tokens)), dtype=np.float32).reshape((len(query_tokens), self.embedder.dimensions, 1)))
-        p_embeddings = np.array(list(map(self.embedder.embed, all_words)), dtype=np.float32)
-        p_embeddings_shaped = tf.convert_to_tensor(p_embeddings.reshape((p_embeddings.shape[0], p_embeddings.shape[1], 1)))
-
-        start, end, sp, ep = self.aligner.predict(query_embedding, p_embeddings_shaped, matrix_arr)
-        print(' '.join(all_words[int(start):int(end)]))
-        print(start, end)
-        print(sp)
-        print(ep)
-    
-    def train_reader2(self, doc_retriever: Retriever, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], 
-                     num_docs = 5, num_questions: int = 2000, checkpoint_dir: str = None) -> None:
-        questions_list = [TreebankWordTokenizer().tokenize(question[0]) for question in questions]
-        max_words = max(len(q_list) for q_list in questions_list)
-        self.aligner.q_encoder.summary()
-        self.aligner.q_aligner.summary()
-        self.aligner.start_pred.summary()
-        self.aligner.end_pred.summary()
-
-        self.aligner.load_checkpoint(checkpoint_dir)
-
-        self.set_spacy_embedder()
-
-        #checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
         query_embedding_list = []
-        p_embeddings_shaped_list = []
+        p_embeddings_list = []
         matrix_arr_list = []
-        start_spans_list = []
-        end_spans_list = []
+        all_word_spans = []
+        pad_vals = []
+        for i in range(len(documents)):
+            #paragraph_list = list(filter(None, documents[i].split('\n\n')))
+            paragraph_inds = list(self.split_with_indicies(documents[i], '\n'))
+            paragraph_list = [documents[i][inds[0]:inds[1]] for inds in paragraph_inds]
+            #return;
+            words = self.flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
+            word_spans = []
+            #paragraph_diff = 0
+            for k in range(len(paragraph_list)):
+                word_spans += self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0])
+                #paragraph_diff += len(paragraph_list[k]) + 2
+            all_word_spans.append(word_spans)
         
+            matrix_arr = self.__construct_vectors(paragraph_list, words, query_tokens)
+            matrix_arr = self.__pad_array(matrix_arr, max_p)
+            query_embedding = np.array(list(map(self.embedder.embed, query_tokens)), dtype=np.float32)
+            query_embedding = self.__pad_array(query_embedding, max_q)
+            p_embeddings = np.array(list(map(self.embedder.embed, words)), dtype=np.float32)
+            pad_vals.append(max_p - p_embeddings.shape[0])
+            p_embeddings = self.__pad_array(p_embeddings, max_p)
+            
+            query_embedding_list.append(query_embedding)
+            p_embeddings_list.append(p_embeddings)
+            matrix_arr_list.append(matrix_arr)
+
+        start, end, start_argmax, end_argmax = self.aligner.predict(np.array(query_embedding_list), np.array(p_embeddings_list), 
+                                                  np.array(matrix_arr_list))
+        ind = int(start[0])
+        if ind != int(end[0]):
+            raise ValueError("something is muy muy fishy")
+        
+        cspan_start = all_word_spans[ind][int(start[1]) - pad_vals[ind]]
+        cspan_end = all_word_spans[ind][int(end[1]) - pad_vals[ind]]
+        print("answer:", documents[ind][cspan_start[0]:cspan_end[1]])
+        print("doc title:", documents[ind][:documents[ind].find('\n\n\n')])
+        print('------')
+        print("other starts:")
+        for i in range(5):
+            print(documents[i][all_word_spans[i][int(start_argmax[i]) - pad_vals[i]][0]:all_word_spans[i][int(end_argmax[i]) - pad_vals[i]][1]])
+            print('---')
+    
+    def split_with_indicies(self, text: str, separator: str = ' ') -> Generator[tuple[int, int]]:
+        start = 0
+        for key, group in groupby(text, lambda x: x[:len(separator)]==separator):
+            end = start + sum(1 for _ in group)
+            if not key:
+                yield start, end
+            start = end
+    
+    def prepare_training_data(self, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], save_dir: str,
+                              num_questions: int = 10000) -> None:
+        self.set_spacy_embedder()
+        max_q = 0
+        max_p = 0
+
         index_list = list(range(len(questions)))
         random.shuffle(index_list)
+        
         ind = 0
+        query_list = [TreebankWordTokenizer().tokenize(questions[i][0]) for i in index_list[:num_questions]]
+        max_q = max((len(query) for query in query_list))
+        paragraph_lists = [list(filter(None, documents[questions[i][1]].split('\n\n'))) for i in index_list[:num_questions]]
+        words_list = [self.flatten(self.__get_tokenized(paragraph) for paragraph in paragraph_list) for paragraph_list in paragraph_lists]
+        max_p = max((len(words) for words in words_list))
+        print("Max q:", max_q, "Max p:", max_p)
+
+        q_path = path.join(save_dir, f"queries_{num_questions}.npy")
+        p_path = path.join(save_dir, f"paragraphs_{num_questions}.npy")
+        f_path = path.join(save_dir, f"feature_matrices_{num_questions}.npy")
+        s_path = path.join(save_dir, f"start_spans_{num_questions}.npy")
+        e_path = path.join(save_dir, f"end_spans_{num_questions}.npy")
         start = time.time()
-        for i in index_list[:num_questions]:
-            print(questions[i])
-            correct_doc = documents[questions[i][1]]
-            correct_title = correct_doc[:correct_doc.find('\n\n\n')]
-            retrieved_docs = [documents[j] for j in doc_retriever.retrieve_docs(questions[i][0], num_docs)]
-            correct_ind = -1
-            titles = [d[:d.find('\n\n\n')] for d in retrieved_docs]
-            for j in range(num_docs):
-                if titles[j] == correct_title:
-                    correct_ind = j
-                    break;
-            if correct_ind == -1:
-                retrieved_docs.pop()
-                retrieved_docs.append(correct_doc)
-                correct_ind = num_docs - 1
-            
-            #print("correct ind:", correct_ind)
-            paragraphs = []
-            all_words = []
-            correct_spans = []
-            doc_offset = 0
-            token_lengths = 0
-            correct_diff = 0
-            for j in range(num_docs):
-                paragraph_list = list(filter(None, retrieved_docs[j].split('\n\n')))
-                #words = list(self.__get_tokenized(retrieved_docs[j]))
-                words = self.flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
-                if j == correct_ind:
-                    doc_offset = token_lengths
-                    for k in range(len(paragraph_list)):
-                        correct_spans += self.__get_tokenized_spans(paragraph_list[k], inc=correct_diff)
-                        correct_diff += len(paragraph_list[k]) + 2
-                paragraphs += paragraph_list
-                all_words += words
-                token_lengths += len(words)
+        with NpyAppendArray(q_path) as q_file, NpyAppendArray(p_path) as p_file, NpyAppendArray(f_path) as f_file, NpyAppendArray(s_path) as s_file, NpyAppendArray(e_path) as e_file:
+            for i in index_list[:num_questions]:
+                max_q = max(max_q, len(query_list[ind]))
+                print(questions[i])
 
-            print("num paragraphs:", len(paragraphs))
-            print("num words:", len(all_words))
-            print("answers:")
-            start_spans = np.zeros(len(all_words))
-            end_spans = np.zeros(len(all_words))
-            #words = list(self.__get_tokenized(retrieved_docs[j]))
-            #token_spans = self.__get_tokenized_spans(correct_doc)
-            for answer in answers[i]:
-                #print("okay looking")
-                print(answer)
-                answer_span = self.__get_answer_span(answer, correct_spans, correct_doc)
-                #print("doc offset:", doc_offset)
-                print((doc_offset+answer_span[0], doc_offset+answer_span[1]+1))
-                #print('\t', [all_words[doc_offset+j] for j in range(answer_span[0], answer_span[1]+1)])
-                #print("test:", all_words[doc_offset-1], all_words[doc_offset], all_words[doc_offset+1])
-                print('\t', all_words[doc_offset+answer_span[0]:doc_offset+answer_span[1]+1])
-                print('\t', correct_doc[answer[0]: answer[1]])
-                start_spans[answer_span[0]+doc_offset] = 1
-                end_spans[answer_span[1]+doc_offset] = 1
-                print("Real indices:", (answer_span[0]+doc_offset, answer_span[1]+doc_offset))
-            #answer_spans = tf.convert_to_tensor(answer_spans, dtype=tf.float32)
-            #return;
-            constructed_vectors = self.__construct_vectors(paragraphs, all_words, questions_list[i], embed=True)
-            matrix_arr = constructed_vectors[:, -6:]
-            p_embeddings = constructed_vectors[:, :-6]
-            # print("construct shape:", constructed_vectors.shape)
-            # print("matrix shape:", matrix_arr.shape)
-            # print("p_embed shape:", p_embeddings.shape)
-            #return;
-            print("lagging part")
-            zeroes = np.zeros((max_words - len(questions_list[i]), self.embedder.dimensions))
-            #print("lag 1")
-            query_embedding = np.concatenate((zeroes, np.array(list(map(self.embedder.embed, questions_list[i])))), dtype=np.float32).reshape((max_words, self.embedder.dimensions, 1))
-            #print("lag 2")
-            #p_embeddings = np.array(list(map(self.embedder.embed, all_words)), dtype=np.float32)
-            #print("lag 3")
-            p_embeddings_shaped = p_embeddings.reshape((p_embeddings.shape[0], p_embeddings.shape[1], 1))
-            #print("lag 4")
-            #return;
+                correct_doc = documents[questions[i][1]]
+                paragraph_list = paragraph_lists[ind]
+                all_words = words_list[ind]
+                max_p = max(max_p, len(all_words))
+                correct_spans = []
+                correct_diff = 0
+                for k in range(len(paragraph_list)):
+                    correct_spans += self.__get_tokenized_spans(paragraph_list[k], inc=correct_diff)
+                    correct_diff += len(paragraph_list[k]) + 2
 
-            query_embedding_list.append(query_embedding)
-            p_embeddings_shaped_list.append(p_embeddings_shaped)
-            matrix_arr_list.append(matrix_arr)
-            start_spans_list.append(start_spans)
-            end_spans_list.append(end_spans)
-            print("correct ind:", correct_ind)
-
-            if (ind + 1) % int(num_questions / 20) == 0:
-                print("ML Stuff")
-                for _ in range(10): print("V")
-                #print("Time taken:", end - start, "seconds")
-                #time.sleep(5)
-                for mind in range(len(query_embedding_list)):
-                    loss = self.aligner.train_step(tf.convert_to_tensor(query_embedding_list[mind]), tf.convert_to_tensor(p_embeddings_shaped_list[mind]), 
-                                                   tf.convert_to_tensor(matrix_arr_list[mind]), tf.convert_to_tensor(start_spans_list[mind], dtype=tf.float32),
-                                                   tf.convert_to_tensor(end_spans_list[mind], dtype=tf.float32))
-                    print("--")
-                    print("loss:", loss)
-                    print("--")
-                    
-                print("saving.....")
-                self.aligner.save_checkpoint()
-                print("-----")
-                query_embedding_list = []
-                p_embeddings_shaped_list = []
-                matrix_arr_list = []
-                start_spans_list = []
-                end_spans_list = []
-            
-            ind += 1
+                print("num paragraphs:", len(paragraph_list))
+                print("num words:", len(all_words))
+                print("answers:")
+                start_spans = np.zeros(len(all_words))
+                end_spans = np.zeros(len(all_words))
+                for answer in answers[i]:
+                    print(answer)
+                    answer_span = self.__get_answer_span(answer, correct_spans)
+                    print((answer_span[0], answer_span[1]+1))
+                    print('\t', all_words[answer_span[0]:answer_span[1]+1])
+                    print('\t', correct_doc[answer[0]: answer[1]])
+                    start_spans[answer_span[0]] = 1
+                    end_spans[answer_span[1]] = 1
+                    diff = answer_span[1]+1 - answer_span[0]
+                    for j in range(len(all_words)):
+                        if all_words[j] == all_words[answer_span[0]] and j != answer_span[0] and all_words[j:j+diff] == all_words[answer_span[0]:answer_span[1]+1]:
+                            print("match found:", all_words[j:j+diff])
+                            start_spans[j] = 1
+                            end_spans[j+diff-1] = 1
+                    print("Real indices:", (answer_span[0], answer_span[1]))
+                
+                constructed_vectors = self.__construct_vectors(paragraph_list, all_words, query_list[ind], embed=True)
+                matrix_arr = constructed_vectors[:, -6:]
+                p_embeddings = constructed_vectors[:, :-6]
+                query_embedding = np.array(list(map(self.embedder.embed, query_list[ind])))
+                
+                q_file.append(self.__pad_array(query_embedding, max_q))
+                p_file.append(self.__pad_array(p_embeddings, max_p))
+                f_file.append(self.__pad_array(matrix_arr, max_p))
+                s_file.append(self.__pad_array(start_spans, max_p))
+                e_file.append(self.__pad_array(end_spans, max_p))
+                ind += 1
         
         end = time.time()
-        
-        # print("ML Stuff")
-        # for i in range(10): print("V")
-        print("Time taken total:", end - start, "seconds")
-
-    def train_reader(self, doc_retriever: Retriever, documents: list[str], questions: list[tuple[str, int]], answers: list[tuple[int, int]], 
-                     num_docs = 5, num_questions: int = 1, checkpoint_dir: str = None) -> None:
-        questions_list = [TreebankWordTokenizer().tokenize(question[0]) for question in questions]
-        max_words = max(len(q_list) for q_list in questions_list)
+        print("Done loading. Time taken total:", end - start, "seconds")
+        print("Max q:", max_q, "Max p:", max_p)
+    
+    def __pad_array(self, array: np.ndarray, max_val: int) -> np.ndarray:
+        pad_len = max_val - array.shape[0]
+        pad_arr = [(pad_len, 0)] + [(0, 0) for _ in range(array.ndim - 1)]
+        return np.pad(array, pad_arr, 'constant')
+    
+    def train_reader(self, data_dir: str, count: int, checkpoint_dir: str) -> None:
         self.aligner.q_encoder.summary()
         self.aligner.q_aligner.summary()
         self.aligner.start_pred.summary()
@@ -317,117 +292,35 @@ class Reader(object):
 
         self.aligner.load_checkpoint(checkpoint_dir)
 
-        self.aligner.restore_checkpoint(checkpoint_dir)
+        queries = np.load(path.join(data_dir, f"queries_{count}.npy"), mmap_mode='r').reshape(count, self.max_q, self.embedder.dimensions)
+        paragraphs = np.load(path.join(data_dir, f"paragraphs_{count}.npy"), mmap_mode='r').reshape(count, self.max_p, self.embedder.dimensions)
+        feature_matrices = np.load(path.join(data_dir, f"feature_matrices_{count}.npy"), mmap_mode='r').reshape(count, self.max_p, 6)
+        start_spans = np.load(path.join(data_dir, f"start_spans_{count}.npy"), mmap_mode='r').reshape(count, self.max_p)
+        end_spans = np.load(path.join(data_dir, f"end_spans_{count}.npy"), mmap_mode='r').reshape(count, self.max_p)
 
-        #checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
-
-        for qind in range(len(questions)):
-            if questions[qind][0] == "When did the Narvaez expedition explore Florida?":
-                break;
-        
-        # index_list = list(range(len(questions)))
-        # random.shuffle(index_list)
-        ind = 0
-        for i in [qind]:
-            correct_doc = documents[questions[i][1]]
-            correct_title = correct_doc[:correct_doc.find('\n\n\n')]
-            retrieved_docs = [documents[j] for j in doc_retriever.retrieve_docs(questions[i][0], num_docs)]
-            correct_ind = -1
-            titles = [d[:d.find('\n\n\n')] for d in retrieved_docs]
-            for j in range(num_docs):
-                if titles[j] == correct_title:
-                    correct_ind = j
-                    break;
-            if correct_ind == -1:
-                retrieved_docs.pop()
-                retrieved_docs.append(correct_doc)
-                correct_ind = num_docs - 1
-            
-            #print("correct ind:", correct_ind)
-            paragraphs = []
-            all_words = []
-            correct_spans = []
-            doc_offset = 0
-            token_lengths = 0
-            correct_diff = 0
-            for j in range(num_docs):
-                paragraph_list = list(filter(None, retrieved_docs[j].split('\n\n')))
-                #words = list(self.__get_tokenized(retrieved_docs[j]))
-                words = self.flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
-                if j == correct_ind:
-                    doc_offset = token_lengths
-                    for k in range(len(paragraph_list)):
-                        correct_spans += self.__get_tokenized_spans(paragraph_list[k], inc=correct_diff)
-                        correct_diff += len(paragraph_list[k]) + 2
-                paragraphs += paragraph_list
-                all_words += words
-                token_lengths += len(words)
-
-            print("num paragraphs:", len(paragraphs))
-            print("num words:", len(all_words))
-            print(questions[i])
-            print("answers:")
-            answer_spans = []
-            start_spans = np.zeros(len(all_words))
-            end_spans = np.zeros(len(all_words))
-            #words = list(self.__get_tokenized(retrieved_docs[j]))
-            #token_spans = self.__get_tokenized_spans(correct_doc)
-            for answer in answers[i]:
-                #print("okay looking")
-                print(answer)
-                answer_span = self.__get_answer_span(answer, correct_spans, correct_doc)
-                #print("doc offset:", doc_offset)
-                print((doc_offset+answer_span[0], doc_offset+answer_span[1]+1))
-                #print('\t', [all_words[doc_offset+j] for j in range(answer_span[0], answer_span[1]+1)])
-                #print("test:", all_words[doc_offset-1], all_words[doc_offset], all_words[doc_offset+1])
-                print('\t', all_words[doc_offset+answer_span[0]:doc_offset+answer_span[1]+1])
-                print('\t', correct_doc[answer[0]: answer[1]])
-                answer_spans.append((answer_span[0]+doc_offset, answer_span[1]+doc_offset+1))
-                start_spans[answer_span[0]+doc_offset] = 1
-                end_spans[answer_span[1]+doc_offset] = 1
-            start_spans = tf.convert_to_tensor(start_spans, dtype=tf.float32)
-            end_spans = tf.convert_to_tensor(end_spans, dtype=tf.float32)
-            print("Real indices:", answer_spans)
-            #return;
-            matrix_arr = tf.convert_to_tensor(self.__construct_vectors(paragraphs, all_words, questions_list[i]))
-            
-            zeroes = np.zeros((max_words - len(questions_list[i]), self.embedder.dimensions))
-            query_embedding = tf.convert_to_tensor(np.concatenate((zeroes, np.array(list(map(self.embedder.embed, questions_list[i])))), dtype=np.float32).reshape((max_words, self.embedder.dimensions, 1)))
-            p_embeddings = np.array(list(map(self.embedder.embed, all_words)), dtype=np.float32)
-            p_embeddings_shaped = tf.convert_to_tensor(p_embeddings.reshape((p_embeddings.shape[0], p_embeddings.shape[1], 1)))
-
-            loss = self.aligner.train_step(query_embedding, p_embeddings_shaped, matrix_arr, start_spans, end_spans)
-
+        for i in range(0, count, self.batch_size):
+            loss = self.aligner.train_step(tf.convert_to_tensor(queries[i:i+self.batch_size]), tf.convert_to_tensor(paragraphs[i:i+self.batch_size]), 
+                                            tf.convert_to_tensor(feature_matrices[i:i+self.batch_size]), tf.convert_to_tensor(start_spans[i:i+self.batch_size], dtype=tf.float32),
+                                            tf.convert_to_tensor(end_spans[i:i+self.batch_size], dtype=tf.float32))
             print("--")
             print("loss:", loss)
             print("--")
+        print("saving.....")
+        self.aligner.save_checkpoint()
+        print("-----")
 
-            # if (ind + 1) % int(num_questions / 5) == 0:
-            #     print("saving.....")
-            #     self.aligner.save_checkpoint()
-            #print("saving.....")
-
-            #self.aligner.save_checkpoint()
-
-            print("-----")
-            ind += 1
-            #return;
-
-    def __get_answer_span(self, answer: tuple[int, int], spans: Iterator[tuple[int, int]], correct_doc: str) -> tuple[int, int]:
+    def __get_answer_span(self, answer: tuple[int, int], spans: Iterator[tuple[int, int]]) -> tuple[int, int]:
         start = -1
         end = -1
         ind = 0
-        #print(answer)
         for span in spans:
             if start == -1 and span[0] >= answer[0]:
-                #print("start stuff:", span, correct_doc[span[0]:span[1]])
                 if span[0] == answer[0]: 
                     start = ind
                 else:
                     print("not exact start")
                     start = ind - 1
             if span[1] >= answer[1]:
-                #print("end stuff:", span, correct_doc[span[0]:span[1]])
                 if span[1] != answer[1]: 
                     print("not exact end")
                 end = ind
@@ -444,9 +337,9 @@ class Reader(object):
 
         counter = Counter(all_words)
         matrix_list = self.preprocess_parallel(paragraphs, len(paragraphs), set(query_list), counter, embed)
+
         matrix_arr = np.vstack(matrix_list)
-        matrix_arr = matrix_arr.reshape(matrix_arr.shape[0], matrix_arr.shape[1], 1)
-        matrix_arr[:, -3:] = matrix_arr[:, -3:]/np.linalg.norm(matrix_arr[:, -3:], axis=1)[:, None]
+        matrix_arr[:, -3:] = matrix_arr[:, -3:]/np.linalg.norm(matrix_arr[:, -3:], axis=0)
         
         end = time.time()
         print("took", end - start, "seconds")
@@ -457,8 +350,9 @@ class Reader(object):
         for token in doc:
             match_vec = self.__exact_match(token, query_set)
             token_vec = self.__token_feature(token, counter[token.text])
+            embed_vec = token.vector if not token.is_oov else self.embedder.unknown_vec
             if embed:
-                matrix.append(np.concatenate((token.vector, match_vec, token_vec)))
+                matrix.append(np.concatenate((embed_vec, match_vec, token_vec)))
             else:
                 matrix.append(np.concatenate((match_vec, token_vec)))
         return matrix
