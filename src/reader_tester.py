@@ -28,7 +28,7 @@ def main():
     # print(spans)
     # print(s[spans[1][0]:spans[1][1]])
 
-    query = "What was Beyoncé's first breakout album?"
+    query = "Who is Beyoncé married to?"
     docs = doc_retriever.get_squad_docs(query, "./data/train-v1.1.json")
     doc_reader.test_reader(docs, query, 38, 17200, checkpoint_dir="models/")
 

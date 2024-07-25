@@ -147,6 +147,8 @@ class Reader(object):
         self.aligner.end_pred.summary()
 
         query_tokens = TreebankWordTokenizer().tokenize(query)
+        query_embedding = np.array(list(map(self.embedder.embed, query_tokens)), dtype=np.float32)
+        query_embedding = self.__pad_array(query_embedding, max_q)
 
         query_embedding_list = []
         p_embeddings_list = []
@@ -158,13 +160,12 @@ class Reader(object):
             paragraph_inds = list(self.__split_inds(documents[i], '\n'))
             paragraph_list = [documents[i][inds[0]:inds[1]] for inds in paragraph_inds]
             words = self.__flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
-            word_spans = [self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0]) for k in range(len(paragraph_list))]
+            word_spans = self.__flatten([self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0]) for k in range(len(paragraph_list))])
             all_word_spans.append(word_spans)
         
             matrix_arr = self.__construct_vectors(paragraph_list, words, query_tokens)
             matrix_arr = self.__pad_array(matrix_arr, max_p)
-            query_embedding = np.array(list(map(self.embedder.embed, query_tokens)), dtype=np.float32)
-            query_embedding = self.__pad_array(query_embedding, max_q)
+            
             p_embeddings = np.array(list(map(self.embedder.embed, words)), dtype=np.float32)
             pad_vals.append(max_p - p_embeddings.shape[0])
             p_embeddings = self.__pad_array(p_embeddings, max_p)
@@ -203,7 +204,7 @@ class Reader(object):
         max_q = max((len(query) for query in query_list))
         #paragraph_lists = [list(filter(None, documents[questions[i][1]].split('\n\n'))) for i in index_list[:num_questions]]
         paragraph_inds_list = [list(self.__split_inds(documents[questions[i][1]], '\n')) for i in index_list[:num_questions]]
-        paragraph_lists = [[documents[questions[i][1]][inds[0]:inds[1]] for inds in paragraph_inds[i]] for i in index_list[:num_questions]]
+        paragraph_lists = [[documents[questions[index_list[i]][1]][inds[0]:inds[1]] for inds in paragraph_inds_list[i]] for i in range(num_questions)]
         words_list = [self.__flatten(self.__get_tokenized(paragraph) for paragraph in paragraph_list) for paragraph_list in paragraph_lists]
         max_p = max((len(words) for words in words_list))
         print("Max q:", max_q, "Max p:", max_p)
@@ -224,7 +225,7 @@ class Reader(object):
                 paragraph_inds = paragraph_inds_list[ind]
                 all_words = words_list[ind]
                 max_p = max(max_p, len(all_words))
-                correct_spans = [self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0]) for k in range(len(paragraph_list))]
+                correct_spans = self.__flatten([self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0]) for k in range(len(paragraph_list))])
 
                 print("num paragraphs:", len(paragraph_list))
                 print("num words:", len(all_words))
