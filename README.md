@@ -52,7 +52,8 @@ Machine Learning models, at the end of the day, are mathematical algorithms that
 
 Word embeddings are an attempt encoding the meaning of words into vectors. At a high level, they are obtained by training models to predict the next word in a given document, or by associating vectors of words that commonly appear next to each other. For our purposes, we will make use of [Glove](https://nlp.stanford.edu/projects/glove/), a pre-trained word embeddings model.
 
-![Word Embeddings Visualization](resources/DrQA%202024-07-27%2010.28.36.excalidraw.png){:style="text-align:center"}
+{:style="text-align:center"}
+![Word Embeddings Visualization](resources/DrQA%202024-07-27%2010.28.36.excalidraw.png)
 
 The result is fairly-accurate meaning representations of words that have quantifiable distances between them.
 
