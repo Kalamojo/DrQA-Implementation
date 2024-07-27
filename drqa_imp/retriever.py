@@ -1,7 +1,6 @@
 from sklearn.feature_extraction.text import TfidfVectorizer
 from scipy import sparse
 import numpy as np
-#from numpy.linalg import norm
 from scipy.sparse.linalg import norm
 from nltk import word_tokenize
 from nltk.corpus import stopwords

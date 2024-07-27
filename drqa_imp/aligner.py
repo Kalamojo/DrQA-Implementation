@@ -170,30 +170,15 @@ class Aligner(object):
         matrix_2_cmax = self._cumulative_max(matrix_2, reverse=reverse)
         return np.multiply(matrix_1, matrix_2_cmax)
     
-    def _tf_while_condition(self, x, loop_counter, reverse):
-        return tf.not_equal(loop_counter, self.span_limit - 1)
-
-    def _tf_while_body(self, x, loop_counter, reverse):
-        loop_counter += 1
-        y = tf.cond(reverse,
-                   lambda: tf.concat((x[:, 1:], tf.expand_dims(x[:, -1], axis=1)), axis=1),
-                   lambda: tf.concat((tf.expand_dims(x[:, 0], axis=1), x[:, :-1]), axis=1))
-        new_x = tf.maximum(x, y)
-        return new_x, loop_counter, reverse
-
     def _cumulative_max(self, matrix: np.ndarray, reverse: bool) -> np.ndarray:
         new_x = np.copy(matrix)
-        for i in range(self.span_limit):
+        for _ in range(self.span_limit):
             if reverse:
                 y = np.concatenate((new_x[:, 1:], np.expand_dims(new_x[:, -1], axis=1)), axis=1)
             else:
                 y = np.concatenate((np.expand_dims(new_x[:, 0], axis=1), new_x[:, :-1]), axis=1)
             new_x = np.maximum(new_x, y)
         return new_x
-        # cumulative_max, _, _ = tf.nest.map_structure(tf.stop_gradient, tf.while_loop(cond=self._tf_while_condition, 
-        #                           body=self._tf_while_body, 
-        #                           loop_vars=(matrix, 0, reverse)))
-        # return cumulative_max
     
     def create_question_aligner(self, max_q: int, max_p: int) -> Model:
         if max_q == -1 or max_p == -1:

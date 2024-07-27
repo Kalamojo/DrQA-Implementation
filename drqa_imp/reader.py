@@ -1,4 +1,4 @@
-from aligner import Aligner
+from drqa_imp.aligner import Aligner
 import csv
 import numpy as np
 from npy_append_array import NpyAppendArray
@@ -186,7 +186,7 @@ class Reader(object):
         print("doc title:", documents[ind][:documents[ind].find('\n\n\n')])
         print('------')
         print("other starts:")
-        for i in range(5):
+        for i in range(len(documents)):
             print(documents[i][all_word_spans[i][int(start_argmax[i]) - pad_vals[i]][0]:all_word_spans[i][int(end_argmax[i]) - pad_vals[i]][1]])
             print('---')
     
@@ -202,7 +202,6 @@ class Reader(object):
         ind = 0
         query_list = [TreebankWordTokenizer().tokenize(questions[i][0]) for i in index_list[:num_questions]]
         max_q = max((len(query) for query in query_list))
-        #paragraph_lists = [list(filter(None, documents[questions[i][1]].split('\n\n'))) for i in index_list[:num_questions]]
         paragraph_inds_list = [list(self.__split_inds(documents[questions[i][1]], '\n')) for i in index_list[:num_questions]]
         paragraph_lists = [[documents[questions[index_list[i]][1]][inds[0]:inds[1]] for inds in paragraph_inds_list[i]] for i in range(num_questions)]
         words_list = [self.__flatten(self.__get_tokenized(paragraph) for paragraph in paragraph_list) for paragraph_list in paragraph_lists]
@@ -214,7 +213,14 @@ class Reader(object):
         f_path = path.join(save_dir, f"feature_matrices_{num_questions}.npy")
         s_path = path.join(save_dir, f"start_spans_{num_questions}.npy")
         e_path = path.join(save_dir, f"end_spans_{num_questions}.npy")
+        sizes_path = path.join(save_dir, "sizes.csv")
+        
         start = time.time()
+
+        with open(sizes_path, 'w') as f:
+            f.write("max_q,max_p,questions\n")
+            f.write(f"{max_q},{max_p},{num_questions}")
+        
         with NpyAppendArray(q_path) as q_file, NpyAppendArray(p_path) as p_file, NpyAppendArray(f_path) as f_file, NpyAppendArray(s_path) as s_file, NpyAppendArray(e_path) as e_file:
             for i in index_list[:num_questions]:
                 max_q = max(max_q, len(query_list[ind]))
