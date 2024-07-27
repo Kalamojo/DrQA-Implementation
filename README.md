@@ -37,7 +37,7 @@ Scikit-Learn offers a useful [package](https://scikit-learn.org/stable/modules/g
 
 ### Document Reader
 
-#### Paragraphs
+#### Feature Extraction
 
 For each token $p_i$ in a given paragraph $p$, obtain the values of each of these 4 types of features:
 
@@ -45,6 +45,8 @@ For each token $p_i$ in a given paragraph $p$, obtain the values of each of thes
 - Exact match
 - Token features
 - Aligned question embedding
+
+We'll talk about how to obtain the first 3 here.
 
 ##### Word Embeddings
 
@@ -70,3 +72,17 @@ For the exact match features, each paragraph word is compared to each word in th
 There are some python libraries offer lemmatization, such as [NLTK](https://www.nltk.org/api/nltk.stem.wordnet.html) and [Spacy](https://spacy.io/usage/linguistic-features#lemmatization) to name a few.
 
 ##### Token features
+
+For the next set of features, a few other NLP techniques were applied.
+
+- Part of Speech (POS) tagging
+- Named Entity Recognition (NER)
+- Term Frequency (TF)
+
+POS tagging is the process of labeling the part of speech a given word is attributed to in a sentence. For example, in the sentence "I pushed my git changes to GitHub", 'pushed' would be labelled as a verb and 'GitHub' as a noun.
+
+Named Entity Recognition is a more specific tagging in the subset of nouns from Parts of Speech. Using the previous example of "I pushed my git changes to GitHub", 'GitHub' might be labelled as an Organization. Other labels are Dates, Locations, and People, depending on the tagging system.
+
+For the purposes of preparing vectors for the Reader model, each [POS](https://spacy.io/usage/linguistic-features#pos-tagging) and [NER](https://spacy.io/usage/linguistic-features#named-entities) is mapped to the index of the options Spacy provides. All three features are then normalized according to their minimum and maximum values.
+
+#### ML Models

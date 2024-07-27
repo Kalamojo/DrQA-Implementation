@@ -119,7 +119,7 @@ class NLTKCustomTokenizer(object):
 class Reader(object):
     def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None, max_q: int = -1, max_p: int = -1, batch_size: int = 32) -> None:
         self.embedder = Embedder(vocab_path, embed_path, glove_path)
-        self.nlp = spacy.load("en_core_web_sm", exclude=['parser', 'tok2vec'])
+        self.nlp = spacy.load("en_core_web_sm", exclude=['parser'])
         self.nlp.tokenizer = NLTKCustomTokenizer(self.nlp.vocab)
         self.feature_dim = 6
         self.max_q = max_q
@@ -139,6 +139,7 @@ class Reader(object):
     def test_reader(self, documents: list[str], query: str, max_q: int, max_p: int, checkpoint_dir: str = None):
         self.aligner.load_checkpoint(checkpoint_dir)
         self.aligner.restore_checkpoint(checkpoint_dir)
+        self.set_spacy_embedder()
 
         self.aligner.q_encoder.summary()
         self.aligner.q_aligner.summary()
@@ -161,10 +162,11 @@ class Reader(object):
             word_spans = self.__flatten([self.__get_tokenized_spans(paragraph_list[k], inc=paragraph_inds[k][0]) for k in range(len(paragraph_list))])
             all_word_spans.append(word_spans)
         
-            matrix_arr = self.__construct_vectors(paragraph_list, words, query_tokens)
+            constructed_vectors = self.__construct_vectors(paragraph_list, words, query_tokens, embed=True)
+            matrix_arr = constructed_vectors[:, -6:]
+            p_embeddings = constructed_vectors[:, :-6]
+
             matrix_arr = self.__pad_array(matrix_arr, max_p)
-            
-            p_embeddings = np.array(list(map(self.embedder.embed, words)), dtype=np.float32)
             pad_vals.append(max_p - p_embeddings.shape[0])
             p_embeddings = self.__pad_array(p_embeddings, max_p)
             
@@ -363,6 +365,8 @@ class Reader(object):
         for token in doc:
             match_vec = self.__exact_match(token, query_set)
             token_vec = self.__token_feature(token, counter[token.text])
+            # if token.is_oov:
+            #     print(token.text)
             embed_vec = token.vector if not token.is_oov else self.embedder.unknown_vec
             if embed:
                 matrix.append(np.concatenate((embed_vec, match_vec, token_vec)))
@@ -382,6 +386,7 @@ class Reader(object):
             ner = self.nlp.meta['labels']['ner'].index(word.ent_type_) + 1
         else:
             ner = 0
+        #print(word.text, word.pos_, pos, ner, freq)
         return np.array([pos, ner, freq])
 
     def fine_tune_embedder(self, documents: list[str], common_count: int = 1000, vocab_save: str = None, embed_save: str = None) -> None:

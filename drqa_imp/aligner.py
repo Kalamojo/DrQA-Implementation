@@ -190,37 +190,37 @@ class Aligner(object):
         assert model.output_shape == (None, max_p, self.embed_dim)
         return model
 
-    def create_question_encoder(self, max_q: int, hidden_units: int = 20, activation: str = "tanh") -> Model:
+    def create_question_encoder(self, max_q: int, hidden_units: int = 20, activation: str = "tanh", dropout: int = 0.3) -> Model:
         if max_q == -1:
             return None
         x = Input(shape=(max_q, self.embed_dim))
-        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, return_sequences=True, activation=activation, dropout=0.2))(x)
+        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, return_sequences=True, activation=activation, dropout=dropout))(x)
         attention_layer = Attention()(LSTM_layer)
         model = Model(x, attention_layer, name="Question_Encoder")
         assert model.output_shape == (None, hidden_units * 2)
         self.q_units = hidden_units * 2
         return model
     
-    def create_start_predictor(self, max_p: int, hidden_units: int = 20, activation: str = "tanh") -> Model:
+    def create_start_predictor(self, max_p: int, hidden_units: int = 20, activation: str = "tanh", dropout: int = 0.3) -> Model:
         if not hasattr(self, 'q_units') or max_p == -1:
             return None
         x_p = Input(shape=(max_p, self.embed_dim * 2 + self.feature_dim))
         x_q = Input(shape=(self.q_units,))
         start_predictor = StartPredictor()([x_p, x_q])
-        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, activation=activation, return_sequences=True, dropout=0.2))(start_predictor)
+        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, activation=activation, return_sequences=True, dropout=dropout))(start_predictor)
         Dense_layer = layers.Dense(1, activation=activation)(LSTM_layer)
         ind_format = IndFormatter()(Dense_layer)
         model = Model([x_p, x_q], ind_format, name="Start_Predictor")
         assert model.output_shape == (None, max_p)
         return model
     
-    def create_end_predictor(self, max_p: int, hidden_units: int = 20, activation: str = "tanh") -> Model:
+    def create_end_predictor(self, max_p: int, hidden_units: int = 20, activation: str = "tanh", dropout: int = 0.3) -> Model:
         if not hasattr(self, 'q_units') or max_p == -1:
             return None
         x_p = Input(shape=(max_p, self.embed_dim * 2 + self.feature_dim))
         x_q = Input(shape=(self.q_units,))
         end_predictor = EndPredictor()([x_p, x_q])
-        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, activation=activation, return_sequences=True, dropout=0.2))(end_predictor)
+        LSTM_layer = layers.Bidirectional(layers.LSTM(hidden_units, activation=activation, return_sequences=True, dropout=dropout))(end_predictor)
         Dense_layer = layers.Dense(1, activation=activation)(LSTM_layer)
         ind_format = IndFormatter()(Dense_layer)
         model = Model([x_p, x_q], ind_format, name="End_Predictor")
