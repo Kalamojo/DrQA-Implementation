@@ -5,7 +5,7 @@ from keras import ops as K
 import numpy as np
 import os
 
-@tf.keras.utils.register_keras_serializable(package='Q-Aligner')
+@keras.utils.register_keras_serializable(package='Q-Aligner')
 class AlignmentLayer(Layer):
     def __init__(self, **kwargs):
         super(AlignmentLayer, self).__init__(**kwargs)
@@ -29,7 +29,7 @@ class AlignmentLayer(Layer):
         context = tf.einsum('ijk,il->ilk', embed_q, alpha)
         return context
 
-@tf.keras.utils.register_keras_serializable(package='Q-Attender')
+@keras.utils.register_keras_serializable(package='Q-Attender')
 class Attention(Layer):
     def __init__(self, **kwargs):
         super(Attention, self).__init__(**kwargs)
@@ -55,7 +55,7 @@ class Attention(Layer):
         context = K.sum(context, axis=1)
         return context
 
-@tf.keras.utils.register_keras_serializable(package='S-Predictor')
+@keras.utils.register_keras_serializable(package='S-Predictor')
 class StartPredictor(Layer):
     def __init__(self, **kwargs):
         super(StartPredictor, self).__init__(**kwargs)
@@ -71,7 +71,7 @@ class StartPredictor(Layer):
         product = tf.einsum('ijk,il->ijl', product, q_vector)
         return product
 
-@tf.keras.utils.register_keras_serializable(package='E-Predictor')
+@keras.utils.register_keras_serializable(package='E-Predictor')
 class EndPredictor(Layer):
     def __init__(self, **kwargs):
         super(EndPredictor, self).__init__(**kwargs)
@@ -87,7 +87,7 @@ class EndPredictor(Layer):
         product = tf.einsum('ijk,il->ijl', product, q_vector)
         return product
 
-@tf.keras.utils.register_keras_serializable(package='Ind-Formatter')
+@keras.utils.register_keras_serializable(package='Ind-Formatter')
 class IndFormatter(Layer):
     def __init__(self, **kwargs):
         super(IndFormatter, self).__init__(**kwargs)

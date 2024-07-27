@@ -119,7 +119,6 @@ class NLTKCustomTokenizer(object):
 class Reader(object):
     def __init__(self, vocab_path: str = None, embed_path: str = None, glove_path: str = None, max_q: int = -1, max_p: int = -1, batch_size: int = 32) -> None:
         self.embedder = Embedder(vocab_path, embed_path, glove_path)
-        #spacy.prefer_gpu()
         self.nlp = spacy.load("en_core_web_sm", exclude=['parser', 'tok2vec'])
         self.nlp.tokenizer = NLTKCustomTokenizer(self.nlp.vocab)
         self.feature_dim = 6
@@ -156,7 +155,6 @@ class Reader(object):
         all_word_spans = []
         pad_vals = []
         for i in range(len(documents)):
-            #paragraph_list = list(filter(None, documents[i].split('\n\n')))
             paragraph_inds = list(self.__split_inds(documents[i], '\n'))
             paragraph_list = [documents[i][inds[0]:inds[1]] for inds in paragraph_inds]
             words = self.__flatten([self.__get_tokenized(paragraph) for paragraph in paragraph_list])
@@ -400,4 +398,3 @@ class Reader(object):
 
     def __flatten(self, list_of_lists: list[list]) -> list:
         return [item for sublist in list_of_lists for item in sublist]
-        #return list(chain.from_iterable(list_of_lists))
